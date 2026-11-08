@@ -30,15 +30,18 @@ Approximate; the console shows the exact hourly price when you create the VM.
 | A100 80GB, on-demand | roughly $5 to $6 | roughly $225 to $270 |
 | H100, on-demand | roughly $10 to $12 | roughly $200 to $240 |
 
-Add the smoke test and a few short debugging sessions, plus about $50 a month
-while a 500 GB SSD boot disk exists. **Delete the VM when you are done**; a
-stopped VM still bills for its disk. The training script shuts the VM down
-when a run finishes, so it never idles on a GPU.
+Add the smoke test and a few short debugging sessions, plus roughly $75 to $130
+a month while the 750 GB SSD boot disk exists. **Delete the VM when you are
+done**; a stopped VM still bills for its disk. The training script shuts the VM
+down when a run finishes, so it never idles on a GPU.
 
-Speech audio for training (about 700 hours) is the other cost: roughly $400 to
-$850 through Deepgram at assumed prices, or GPU time on this same VM if an open
-TTS backend is added to `render_audio.py`. Elle's channel should be voiced
-with her production voice, so the model learns to sound like her.
+The training speech (about 700 hours of stereo audio) is generated on this same
+VM by Kokoro, an open, Apache-licensed speech model: no API, no key, and no
+conversation text leaving the project. It is estimated at 1 to 3 hours of GPU
+time with several workers; `prepare.sh check` prints the real speed. Elle's
+training voice is a Kokoro voice, not the Deepgram voice production uses today;
+the duplex model generates its own voice, so what matters is that this voice
+matches the voice prompt she is given at run time.
 
 ## Order of operations
 
@@ -49,18 +52,21 @@ laptop  1. Request the GPU quota (above). Wait for approval.
         4. bash training/gcp/create_vm.sh
         5. gcloud compute scp training/gcp/gcp.env elle-train:~ ...; gcloud compute ssh elle-train ...
 VM      6. git clone the repo; export HF_TOKEN=...; bash ~/ELLE/training/gcp/vm_setup.sh
-        7. bash training/gcp/smoke.sh          expect to fix the real-model backend here
-        8. bash training/gcp/prepare.sh retime
-anywhere 9. render audio from retimed.jsonl; copy it to ~/elle-work/audio on the VM
-VM     10. bash training/gcp/prepare.sh mimi
-       11. nohup bash training/gcp/train.sh > ~/train.log 2>&1 &
-       12. bash training/gcp/eval.sh
-laptop 13. gcloud storage rsync -r gs://<bucket>/runs ./runs   then delete the VM
+        7. bash training/gcp/smoke.sh            expect to fix the real-model backend here
+        8. bash training/gcp/prepare.sh check    one sample per voice; listen to them
+        9. bash training/gcp/prepare.sh synth    speak every line once (try LIMIT=50 first)
+       10. bash training/gcp/prepare.sh retime
+       11. bash training/gcp/prepare.sh assemble listen to a few files in ~/elle-work/audio
+       12. bash training/gcp/prepare.sh mimi
+       13. nohup bash training/gcp/train.sh > ~/train.log 2>&1 &
+       14. bash training/gcp/eval.sh
+laptop 15. gcloud storage rsync -r gs://<bucket>/runs ./runs   then delete the VM
 ```
 
 If Spot stops the VM mid-run: `gcloud compute instances start elle-train
---zone ...`. The boot service resumes training from the last checkpoint by
-itself.
+--zone ...`. The boot service resumes **training** from the last checkpoint by
+itself. The audio steps (9 to 11) resume too, but not on their own: start the
+VM and rerun the same command.
 
 ## What the training data contains
 
@@ -69,11 +75,9 @@ transcripts and no personal data are uploaded. Keep it that way: production
 call logs belong to real people, and moving them into a training bucket is a
 separate decision.
 
-## Not built yet
+## Untested until the VM
 
-- An open-source TTS backend for `render_audio.py`, if you'd rather not pay an
-  API for the audio.
-
-The real-model code (loading, the evaluation loop's model adapter, Mimi
+Kokoro's voices, real clip lengths and speed are checked by `prepare.sh check`,
+which needs the model weights and so could not run where this was written. The real-model code (loading, the evaluation loop's model adapter, Mimi
 decoding) was written from Moshi and PersonaPlex source and has never run.
 The smoke test and the first `eval.sh` are where that gets fixed.

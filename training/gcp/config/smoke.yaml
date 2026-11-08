@@ -6,6 +6,7 @@ extends: gcp.yaml
 run_dir: ${ELLE_WORK}/runs/smoke
 
 data:
+  episodes: ${ELLE_WORK}/data/episodes.jsonl   # runs before any audio exists
   prepared_dir: ${ELLE_WORK}/runs/smoke/prepared
   plain_prepared_dir: null            # the smoke test doesn't need the plain set
 

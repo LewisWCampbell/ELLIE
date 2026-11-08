@@ -28,9 +28,17 @@ pip install "$ELLE_WORK/personaplex/moshi/."
 export HF_HOME="$ELLE_WORK/hf"
 python3 - <<'PY'
 from huggingface_hub import snapshot_download
-for repo in ("nvidia/personaplex-7b-v1", "kyutai/moshiko-pytorch-bf16"):
+for repo in ("nvidia/personaplex-7b-v1", "kyutai/moshiko-pytorch-bf16", "hexgrad/Kokoro-82M"):
     print("downloading", repo, "->", snapshot_download(repo))
 PY
+
+# The open speech model (Kokoro) that voices the training audio, in its own
+# venv: its dependencies can upgrade packages the training venv relies on.
+sudo apt-get install -y espeak-ng
+python3 -m venv "$ELLE_WORK/tts-venv"
+"$ELLE_WORK/tts-venv/bin/pip" install --upgrade pip
+"$ELLE_WORK/tts-venv/bin/pip" install -r "$REPO/training/data/requirements.txt" "kokoro==0.9.4" "misaki[en]==0.9.4"
+"$ELLE_WORK/tts-venv/bin/python" -m spacy download en_core_web_sm
 
 python3 "$REPO/training/data/generate.py" --out "$ELLE_WORK/data" --prefix full_ \
   --train 20000 --val 1000 --test 1000 --seed 7 --holdout-family slot_conflict

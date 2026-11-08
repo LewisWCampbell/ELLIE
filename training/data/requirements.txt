@@ -3,7 +3,11 @@
 #
 # Optional:
 #   anthropic   - only for expand.py's paraphrase pass (no key = passthrough)
+#   kokoro==0.9.4, misaki[en]==0.9.4 (+ torch) - only for render_audio.py --backend kokoro (on the GPU VM;
+#                 also `python3 -m spacy download en_core_web_sm` and `apt-get install espeak-ng`, see README)
 #   tzdata      - only on systems without an IANA timezone database (e.g. Windows),
 #                 so zoneinfo can resolve America/Los_Angeles
 # anthropic
+# kokoro==0.9.4
+# misaki[en]==0.9.4
 # tzdata
