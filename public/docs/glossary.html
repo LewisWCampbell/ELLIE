@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glossary · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Glossary</h1>
+<p class="lead">Every term of art these docs lean on, then every configuration variable in the
+system. Terms first, alphabetical; variables after, with secrets marked. The canonical
+grouped variable reference lives on <a href="operations.html">Operations</a>; this is the
+flat lookup.</p>
+
+<h2>Terms</h2>
+<div class="tablewrap"><table>
+<tr><th>Term</th><th>Meaning here</th></tr>
+<tr><td><strong>A2P / 10DLC</strong></td><td>Application-to-person messaging over ten-digit long-code numbers. Carriers require a registered brand and campaign with a verifiable opt-in before business SMS deliver reliably.</td></tr>
+<tr><td><strong>Backchannel</strong></td><td>A short acknowledgment ('mm-hm', 'let me check') that keeps a conversation feeling alive. In the director roadmap these are pre-synthesized clips the talker plays while the brain works.</td></tr>
+<tr><td><strong>BAA</strong></td><td>Business Associate Agreement: the HIPAA contract that must cover a vendor's specific service before PHI may touch it. See the compliance page for the full chain.</td></tr>
+<tr><td><strong>Barge-in</strong></td><td>The caller talking over Elle and being honored: generation, synthesis, and playback all cancel, and her memory is truncated to what was actually heard.</td></tr>
+<tr><td><strong>BM25</strong></td><td>The classic lexical ranking function behind the knowledge search; retrieval with no embeddings and no vector database.</td></tr>
+<tr><td><strong>Cache breakpoint</strong></td><td>A cache_control marker on a prompt block telling the API 'everything up to here may be reused.' One rides the static persona; another rides the conversation's last message.</td></tr>
+<tr><td><strong>Cascade</strong></td><td>The architecture family where STT, LLM, and TTS are separate components passing text: maximal control, timer-based turn-taking. Elle's production stack is an advanced cascade.</td></tr>
+<tr><td><strong>Code-switching</strong></td><td>Changing language mid-conversation, even mid-sentence. Nova-3's multi mode transcribes it in one stream, tagging each word's language.</td></tr>
+<tr><td><strong>Containment</strong></td><td>The fraction of calls the AI resolves end to end with no human. The single most valuable number in the call-center economics: one point ≈ $55K/month at modeled volume.</td></tr>
+<tr><td><strong>CTA (call to action)</strong></td><td>In A2P review, the public place where a consumer learns how to opt in. Reviewers must be able to find and verify it; ask.html carries Elle's.</td></tr>
+<tr><td><strong>Director</strong></td><td>The roadmap architecture: hearing and turn-taking fused into one duplex model that answers routine turns itself and escalates hard ones to the brain, whose sentences stream straight to the house TTS.</td></tr>
+<tr><td><strong>Duplex model</strong></td><td>A model that listens and speaks simultaneously rather than in strict turns, making turn-taking judgment part of the model instead of a timer.</td></tr>
+<tr><td><strong>Endpointing</strong></td><td>The STT's decision that a speaker has finished, from trailing silence. Tunable; the cascade's one native compromise, and what the director removes.</td></tr>
+<tr><td><strong>Escalation</strong></td><td>The talker handing a hard turn to the inference brain via a tool call, invisibly to the caller. The delegation-leak eval exists to keep it invisible.</td></tr>
+<tr><td><strong>Fusion boundary</strong></td><td>Which of the four layers (hearing, judgment, reasoning, speech) are merged into one model. Every voice architecture is a choice of boundary; the trade-offs page prices them.</td></tr>
+<tr><td><strong>Greeting gate</strong></td><td>The bridge-side lock that keeps barge-in disabled until every frame of the opening message has been sent to the caller.</td></tr>
+<tr><td><strong>Half-cascade</strong></td><td>Industry term for audio-in, text-middle, synthesized-out architectures; the director is a full-fledged one with an escalation tier.</td></tr>
+<tr><td><strong>μ-law (G.711)</strong></td><td>The 8 kHz telephone audio codec Twilio speaks. Both speech legs run it natively, so no transcoding happens anywhere: 8 bytes per millisecond, 160 bytes per 20 ms frame.</td></tr>
+<tr><td><strong>Media stream</strong></td><td>Twilio's bidirectional WebSocket carrying live call audio; guarded by the HMAC media token.</td></tr>
+<tr><td><strong>Pairing code</strong></td><td>The short code Elle speaks that joins a browser to the live call for transcripts, visuals, and typed input.</td></tr>
+<tr><td><strong>PHI</strong></td><td>Protected Health Information under HIPAA. Elle handles none; the compliance page documents the path a deployment that does would take.</td></tr>
+<tr><td><strong>Prompt cache</strong></td><td>Provider-side reuse of an identical prompt prefix at ~10% of input price. Three layers of it cut the LLM line ~85%.</td></tr>
+<tr><td><strong>Silent-call guard</strong></td><td>The timer that hangs up a call whose caller has said nothing (robocall probes); cleared by the first real utterance, typed input included.</td></tr>
+<tr><td><strong>Smart turn / semantic VAD</strong></td><td>Vendor terms for end-of-turn detection smarter than a silence timer; the shallow cousin of what the director fuses.</td></tr>
+<tr><td><strong>Speech-to-speech (fused)</strong></td><td>One model consuming and producing audio directly. Most natural turn-taking, but paraphrased output, voice lock-in, and 5-10x cost; Elle's demo mode.</td></tr>
+<tr><td><strong>Static / dynamic split</strong></td><td>The prompt discipline making caching work across calls: byte-identical persona first, per-call context after, so the shared prefix never breaks.</td></tr>
+<tr><td><strong>Talker / thinker</strong></td><td>Informal names for the director's two halves: the cheap fused model that handles most turns, and the full LLM it escalates to.</td></tr>
+<tr><td><strong>turnSeq</strong></td><td>The integer at the heart of cancellation: every turn captures it, barge-in increments it, and any stage whose copy is stale stops at its next checkpoint.</td></tr>
+<tr><td><strong>TwiML</strong></td><td>Twilio's XML instruction language; the /voice-realtime webhook answers with TwiML that opens the media stream and embeds the media token.</td></tr>
+<tr><td><strong>Utterance</strong></td><td>One complete caller turn as assembled by the STT from final transcripts, ended by endpointing or its slower fallback.</td></tr>
+<tr><td><strong>VAD</strong></td><td>Voice activity detection: 'sound is happening.' Deliberately NOT trusted for barge-in, which requires recognized words.</td></tr>
+<tr><td><strong>Verbatim delivery</strong></td><td>Speaking a script exactly as written; guaranteed by the cascade's text bottleneck and impossible to guarantee in fused speech-to-speech.</td></tr>
+<tr><td><strong>WAL</strong></td><td>SQLite's write-ahead log mode, letting live-call writes and admin reads coexist without blocking.</td></tr>
+<tr><td><strong>Warm socket</strong></td><td>A connection opened before it is needed (TTS during LLM thinking) so the handshake never delays the first audible word.</td></tr>
+<tr><td><strong>ZDR</strong></td><td>Zero data retention: the API configuration OpenAI requires alongside its BAA before PHI may touch the Realtime API.</td></tr>
+</table></div>
+
+<h2>Variables</h2>
+<p>Everything tunable, A to Z. <span class="pill">SECRET</span> marks values that live only in
+Secret Manager and are documented by name only, everywhere, always.</p>
+<div class="tablewrap"><table>
+<tr><th>Variable</th><th>Purpose</th></tr>
+<tr><td><code>ABUSE_BLOCK_AFTER</code></td><td>Calls in the window after which a number is blocked before the paid pipeline starts.</td></tr>
+<tr><td><code>ABUSE_LIMITED_AFTER</code></td><td>Calls in the window after which a caller gets the short-and-capped treatment.</td></tr>
+<tr><td><code>ABUSE_LIMITED_MAX_SECONDS</code></td><td>Hard duration cap for limited-tier calls.</td></tr>
+<tr><td><code>ABUSE_WINDOW_HOURS</code></td><td>Rolling window for repeat-caller counting.</td></tr>
+<tr><td><code>ALLOW_UNSIGNED_TWILIO</code></td><td>Local development only. Without a Twilio auth token the service refuses to boot, because webhook signatures and the /media stream token cannot be verified; this is the explicit opt-in that replaces silently skipping those checks.</td></tr>
+<tr><td><code>BOOKING_BUSY_CALENDARS</code></td><td>Comma-separated calendar ids consulted for conflicts but never written to. Without them, bookings land on top of anything on a personal calendar, because free/busy only ever saw the calendar it writes to. Each must be shared with the service account at "See only free/busy" or better; one that stops being shared raises rather than dropping out of the check.</td></tr>
+<tr><td><code>BRAND_NAME</code></td><td>The legal entity registered as the A2P 10DLC brand. Appears only where carriers require the responsible party to be identifiable: the HELP reply and the enrollment confirmation. Must match Trust Hub character for character; empty leaves every message unchanged.</td></tr>
+<tr><td><code>CALL_ARCHIVE_BUCKET</code></td><td>Cloud Storage bucket holding the durable call archive. Empty means call history lives only on the container and is lost on the next deploy. Each call is written as its own object and replayed into the local database on startup.</td></tr>
+<tr><td><code>CALL_ARCHIVE_RESTORE_DAYS</code></td><td>How many days of archived calls to replay on startup (default 30).</td></tr>
+<tr><td><code>MAX_CONCURRENT_CALLS</code></td><td>Calls allowed at once (default 20). Past this the next caller is told the line is busy and asked to text, instead of hearing silence and concluding the number is broken. Checked before the media stream opens, so no paid pipeline starts.</td></tr>
+<tr><td><code>ADMIN_TOKEN</code></td><td><span class="pill">SECRET</span> Enables /admin views; absent, they 404. Compared timing-safe.</td></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td><span class="pill">SECRET</span> Claude via the Anthropic API (LLM_PROVIDER=anthropic).</td></tr>
+<tr><td><code>ASK_PATH</code></td><td>Path of the page carrying chat + pairing on the site (default <code>/ask.html</code>).</td></tr>
+<tr><td><code>ASSISTANT_NAME</code></td><td>The assistant's name; 'Elle'.</td></tr>
+<tr><td><code>BOOKING_CALENDAR_ID</code></td><td>Google Calendar receiving tentative holds; unset degrades booking to lead capture.</td></tr>
+<tr><td><code>BOOKING_DURATION_MINUTES</code></td><td>Intro-call length.</td></tr>
+<tr><td><code>BOOKING_TIMEZONE</code></td><td>The owner's timezone for read-backs and event times.</td></tr>
+<tr><td><code>BOT_MODE</code></td><td>interview (represents the owner) or learn (interviews the caller); auto-selected from profile presence.</td></tr>
+<tr><td><code>CLAUDE_MODEL</code></td><td>Model id for the Anthropic path; Haiku-class by default for voice economics.</td></tr>
+<tr><td><code>CORS_ORIGIN</code></td><td>Origins allowed on /api/*, so the main site can embed the chat.</td></tr>
+<tr><td><code>DEEPGRAM_API_KEY</code></td><td><span class="pill">SECRET</span> One key for streaming STT and Aura TTS.</td></tr>
+<tr><td><code>DEEPGRAM_BARGE_IN_GRACE_MS</code></td><td>Ignore interruptions this long after Elle starts a reply (echo protection).</td></tr>
+<tr><td><code>DEEPGRAM_BARGE_IN_MIN_CHARS</code></td><td>Recognized characters required before speech counts as an interruption.</td></tr>
+<tr><td><code>DEEPGRAM_ENDPOINTING_MS</code></td><td>Trailing silence that ends a caller's turn; the patience/latency dial.</td></tr>
+<tr><td><code>DEEPGRAM_STT_MODEL</code></td><td>English-only STT model (nova-2-phonecall).</td></tr>
+<tr><td><code>DEEPGRAM_STT_MULTI_MODEL</code></td><td>Code-switching model for bilingual calls (nova-3 with language=multi).</td></tr>
+<tr><td><code>DEEPGRAM_TTS_MODEL</code></td><td>Elle's English voice (aura-2-thalia-en, a bright American female voice from the Aura-2 catalog).</td></tr>
+<tr><td><code>DEEPGRAM_TTS_MODEL_ES</code></td><td>Elle's Spanish voice (aura-2-celeste-es).</td></tr>
+<tr><td><code>KNOWLEDGE_DIR</code></td><td>Markdown directory that becomes the RAG knowledge base.</td></tr>
+<tr><td><code>LANGUAGES</code></td><td>Conversation languages; more than one enables bilingual mode end to end.</td></tr>
+<tr><td><code>LLM_PROVIDER</code></td><td>anthropic | vertex (same models inside the GCP BAA) | openai-compatible.</td></tr>
+<tr><td><code>MAX_CALL_SECONDS</code></td><td>Hard ceiling on any realtime call (default 600); the autodialer backstop.</td></tr>
+<tr><td><code>OPENAI_API_KEY</code></td><td><span class="pill">SECRET</span> Key for the OpenAI-compatible text path (open models, self-hosted vLLM).</td></tr>
+<tr><td><code>OPENAI_BASE_URL</code></td><td>Endpoint for the OpenAI-compatible text path.</td></tr>
+<tr><td><code>OPENAI_MODEL</code></td><td>Model id for the OpenAI-compatible text path.</td></tr>
+<tr><td><code>OPENAI_REALTIME_API_KEY</code></td><td><span class="pill">SECRET</span> Fused speech-to-speech demo mode; absent, the runtime switch refuses demo mode.</td></tr>
+<tr><td><code>OPENAI_REALTIME_MODEL</code></td><td>Realtime model id for demo mode.</td></tr>
+<tr><td><code>PORT</code></td><td>HTTP port (Cloud Run injects it).</td></tr>
+<tr><td><code>PROFILE_NAME</code></td><td>The owner Elle represents.</td></tr>
+<tr><td><code>PROFILE_PATH</code></td><td>Markdown profile enabling interview mode.</td></tr>
+<tr><td><code>PUBLIC_URL</code></td><td>The service's public base URL; webhooks, pairing links, signature validation.</td></tr>
+<tr><td><code>REALTIME_PROVIDER</code></td><td>Default voice architecture: deepgram (cascade) | openai (demo); owner-overridable at runtime.</td></tr>
+<tr><td><code>REALTIME_VOICE</code></td><td>Voice for the fused demo mode.</td></tr>
+<tr><td><code>RECORDING_BUCKET</code></td><td>GCS bucket for recordings, when enabled.</td></tr>
+<tr><td><code>RECORDING_ENABLED</code></td><td>Off by default; enabling requires the spoken consent notice.</td></tr>
+<tr><td><code>RECORDING_PREFIX</code></td><td>Object prefix inside the bucket.</td></tr>
+<tr><td><code>SITE_URL</code></td><td>The human-facing website visitors and callers are sent to; distinct from PUBLIC_URL (this service's origin).</td></tr>
+<tr><td><code>SILENT_HANGUP_SECONDS</code></td><td>Hang up if the caller has said nothing this long (default 75); 0 disables.</td></tr>
+<tr><td><code>SQLITE_PATH</code></td><td>Where the database file lives.</td></tr>
+<tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td><span class="pill">SECRET</span> The owner intake bot's API token.</td></tr>
+<tr><td><code>TELEGRAM_OWNER_ID</code></td><td>The single numeric account the intake channel obeys; unset = self-serve setup mode.</td></tr>
+<tr><td><code>TELEGRAM_WEBHOOK_SECRET</code></td><td><span class="pill">SECRET</span> Shared secret echoed on every update; mismatches are dropped.</td></tr>
+<tr><td><code>TTS_VOICE</code></td><td>Voice for the legacy cascaded <Say> path.</td></tr>
+<tr><td><code>TWILIO_ACCOUNT_SID</code></td><td>Account id for outbound SMS.</td></tr>
+<tr><td><code>TWILIO_AUTH_TOKEN</code></td><td><span class="pill">SECRET</span> Webhook signature validation, and the HMAC key for media-stream tokens.</td></tr>
+<tr><td><code>TWILIO_FROM_NUMBER</code></td><td>The public number, E.164, for outbound sends.</td></tr>
+<tr><td><code>VERTEX_MODEL</code></td><td>Exact Model Garden id, region-pinned.</td></tr>
+<tr><td><code>VERTEX_PROJECT_ID</code></td><td>GCP project for the Vertex path (auth is ADC; no key exists).</td></tr>
+<tr><td><code>VERTEX_REGION</code></td><td>Region serving the Vertex model.</td></tr>
+</table></div>
+
+<h2>Log vocabulary</h2>
+<div class="tablewrap"><table>
+<tr><th>Prefix</th><th>Stream</th></tr>
+<tr><td><code>[timing]</code></td><td>Per-turn latency budget: utterance end path, first token, first sentence, first audio.</td></tr>
+<tr><td><code>[voice]</code></td><td>Conversation events: utterances, barge-ins, echo suppressions, language switches, merges, failures.</td></tr>
+<tr><td><code>[call]</code></td><td>Call boundaries, caller number, tier, and the guard firings (duration cap, silent hangup).</td></tr>
+<tr><td><code>[llm]</code></td><td>Token accounting: in / cacheRead / cacheWrite / out.</td></tr>
+<tr><td><code>[sms]</code> · <code>[telegram]</code></td><td>Channel traffic, consent confirmations, outreach sends, gate rejections.</td></tr>
+</table></div>
+
+<h2>Runtime settings (the settings table)</h2>
+<div class="tablewrap"><table>
+<tr><th>Key</th><th>Meaning</th></tr>
+<tr><td><code>voice_provider</code></td><td>The owner's runtime architecture override (cascade/demo); set from the private channel, survives restarts, cleared to fall back to REALTIME_PROVIDER.</td></tr>
+</table></div>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

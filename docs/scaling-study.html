@@ -1,0 +1,744 @@
+<title>Elle at Call-Center Scale</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap">
+<style>
+  :root{
+    --paper:#e7e6df; --raise:#efeee8; --ink:#17171b; --muted:#6f6e78;
+    --rule:rgba(23,23,27,.14); --rule2:rgba(23,23,27,.34); --accent:#1e37e6;
+    --s0:#1c7c4a; --s1:#8a5cc4; --s2:#9a6f10; --s3:#1e37e6; --s4:#b8462a;
+    --good:#1c7c4a; --warn:#9a6f10; --bad:#b8462a;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --serif:"Charter","Source Serif 4","Iowan Old Style",Georgia,serif;
+    --measure:34rem;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0d0d12; --raise:#15151c; --ink:#ecebe4; --muted:#8c8b95;
+      --rule:rgba(236,235,228,.14); --rule2:rgba(236,235,228,.3); --accent:#6d84ff;
+      --s0:#3fa96e; --s1:#9a72cf; --s2:#b08a22; --s3:#6d84ff; --s4:#e06b48;
+      --good:#3fa96e; --warn:#b08a22; --bad:#e06b48;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d0d12; --raise:#15151c; --ink:#ecebe4; --muted:#8c8b95;
+    --rule:rgba(236,235,228,.14); --rule2:rgba(236,235,228,.3); --accent:#6d84ff;
+    --s0:#3fa96e; --s1:#9a72cf; --s2:#b08a22; --s3:#6d84ff; --s4:#e06b48;
+    --good:#3fa96e; --warn:#b08a22; --bad:#e06b48;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:var(--serif);font-size:17px;line-height:1.62;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:60rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;
+        display:flex;flex-direction:column;gap:3.25rem}
+  .col{max-width:var(--measure)}
+  p{margin:0 0 1rem}
+  p:last-child{margin-bottom:0}
+  a{color:var(--accent)}
+  a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+  .masthead{border-bottom:1.5px solid var(--rule2);padding-bottom:1.1rem;
+            display:flex;flex-direction:column;gap:1.4rem}
+  .slug{font-family:var(--mono);font-size:.64rem;letter-spacing:.22em;
+        text-transform:uppercase;color:var(--muted);
+        display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+  h1{font-size:clamp(2.1rem,5.2vw,3.1rem);line-height:1.04;letter-spacing:-.025em;
+     margin:0;font-weight:700;text-wrap:balance;max-width:20ch}
+  .standfirst{font-size:1.16rem;color:var(--muted);margin:0;max-width:44ch}
+
+  section{display:flex;flex-direction:column;gap:1.25rem}
+  h2{font-family:var(--mono);font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;
+     font-weight:600;margin:0;padding-bottom:.55rem;border-bottom:1.5px solid var(--rule2);
+     display:flex;gap:.9rem;align-items:baseline}
+  h2 .no{color:var(--accent);font-variant-numeric:tabular-nums}
+  h3{font-size:1.06rem;margin:.4rem 0 0;letter-spacing:-.01em}
+
+  .lede{font-size:1.1rem}
+  .findings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1.1rem;counter-reset:f}
+  .findings li{counter-increment:f;display:grid;grid-template-columns:1.9rem 1fr;gap:.9rem;
+               max-width:calc(var(--measure) + 2.8rem)}
+  .findings li p{margin:0}
+  .findings li::before{content:counter(f,decimal-leading-zero);font-family:var(--mono);
+                       font-size:.72rem;color:var(--accent);letter-spacing:.06em;padding-top:.42rem}
+
+  .figure{display:flex;flex-direction:column;gap:.7rem}
+  .figure .cap{font-family:var(--mono);font-size:.7rem;color:var(--muted);letter-spacing:.04em;
+               max-width:70ch;line-height:1.6}
+  .scroll{overflow-x:auto;padding-bottom:.3rem}
+  .chart{width:100%;min-width:34rem;height:auto;display:block}
+  .grid{stroke:var(--rule);stroke-width:1}
+  .tick,.axis{font-family:var(--mono);font-size:10px;fill:var(--muted)}
+  .rowlab{font-family:var(--serif);font-size:13.5px;fill:var(--ink)}
+  .total{font-family:var(--mono);font-size:11.5px;font-weight:600;fill:var(--ink);
+         font-variant-numeric:tabular-nums}
+  .seg{transition:opacity .12s}
+  .chart:hover .seg{opacity:.45}
+  .chart .seg:hover{opacity:1}
+  .s0{fill:var(--s0)}.s1{fill:var(--s1)}.s2{fill:var(--s2)}.s3{fill:var(--s3)}.s4{fill:var(--s4)}
+  .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .dot{stroke:var(--paper);stroke-width:2}
+  .leader{fill:none;stroke-width:1}
+  .endlab{font-family:var(--mono);font-size:10.5px}
+  .f-base{--c:var(--muted)}
+  .f-man{--c:var(--s3)}
+  .f-host{--c:var(--s4)}
+  .line{stroke:var(--c)}
+  .line.alt{stroke-dasharray:5 4}
+  .dot{fill:var(--c)}
+  .leader{stroke:var(--c)}
+  .endlab{fill:var(--c)}
+
+
+  .legend{display:flex;flex-wrap:wrap;gap:.4rem 1.3rem;font-family:var(--mono);
+          font-size:.68rem;letter-spacing:.04em;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:.42rem}
+  .key{width:10px;height:10px;border-radius:2px;flex:none}
+  .k0{background:var(--s0)}.k1{background:var(--s1)}.k2{background:var(--s2)}
+  .k3{background:var(--s3)}.k4{background:var(--s4)}
+
+  table{border-collapse:collapse;width:100%;min-width:36rem;
+        font-size:.92rem;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:.62rem .9rem .62rem 0;border-bottom:1px solid var(--rule);
+        vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;
+           color:var(--muted);border-bottom:1.5px solid var(--rule2);font-weight:500;
+           padding-bottom:.5rem;white-space:nowrap}
+  td.n,th.n{text-align:right;font-family:var(--mono);font-size:.84rem;padding-right:0}
+  tbody tr:last-child td{border-bottom:none}
+  tr.rule-top td{border-top:1.5px solid var(--rule2)}
+  .win{color:var(--good);font-weight:600}
+  .lose{color:var(--bad)}
+  .name{font-weight:600;white-space:nowrap}
+  .sub{display:block;font-family:var(--mono);font-size:.66rem;color:var(--muted);
+       font-weight:400;letter-spacing:.02em;white-space:normal;max-width:22ch}
+
+  sup a{font-family:var(--mono);font-size:.62rem;text-decoration:none;padding:0 .06em;
+        font-variant-numeric:tabular-nums}
+  sup a:hover{text-decoration:underline}
+
+  .callout{border-left:2.5px solid var(--accent);padding:.15rem 0 .15rem 1.15rem;
+           max-width:calc(var(--measure) + 1.15rem)}
+  .callout .lab{font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;
+                text-transform:uppercase;color:var(--accent);display:block;margin-bottom:.35rem}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:1px;
+         background:var(--rule);border:1px solid var(--rule)}
+  .stat{background:var(--paper);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.2rem}
+  .stat .v{font-family:var(--mono);font-size:1.5rem;font-weight:600;letter-spacing:-.03em;
+           font-variant-numeric:tabular-nums;line-height:1.1}
+  .stat .l{font-family:var(--mono);font-size:.62rem;letter-spacing:.13em;text-transform:uppercase;
+           color:var(--muted)}
+  .stat .n{font-size:.84rem;color:var(--muted);line-height:1.45;margin-top:.2rem}
+
+  code{font-family:var(--mono);font-size:.86em;background:var(--raise);
+       padding:.08em .34em;border-radius:2px}
+  pre{margin:0;background:var(--raise);border:1px solid var(--rule);border-radius:3px;
+      padding:1rem 1.1rem;overflow-x:auto;font-family:var(--mono);font-size:.78rem;line-height:1.65}
+
+  .notes{font-size:.86rem;line-height:1.6}
+  .notes ol{margin:0;padding-left:1.6rem;display:flex;flex-direction:column;gap:.55rem}
+  .notes li{padding-left:.25rem}
+  .notes li:target{background:var(--raise);outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}
+  .notes .m{font-family:var(--mono);font-size:.82em}
+
+  footer{border-top:1.5px solid var(--rule2);padding-top:1rem;font-family:var(--mono);
+         font-size:.66rem;letter-spacing:.06em;color:var(--muted);
+         display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+  @media (max-width:640px){
+    body{font-size:16px}
+    .findings li{grid-template-columns:1.5rem 1fr;gap:.6rem}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="slug">
+    <span>Capacity &amp; cost study</span>
+    <span>LetsTalk / Elle &middot; 27 Aug 2026</span>
+  </div>
+  <h1>Elle at Call-Center Scale</h1>
+  <p class="standfirst">What it takes to go from 43 calls a month to a quarter of a million, what
+  a full-duplex interaction model changes, and what each option costs per minute with every
+  fee counted.</p>
+</header>
+
+<section>
+  <h2><span class="no">01</span> The short answer</h2>
+  <div class="col">
+    <p class="lede">Cost is not what stops this system from handling call-center volume. State
+    is. The arithmetic below matters, but it is the second problem.</p>
+  </div>
+  <ol class="findings">
+    <li><p><strong>A duplex model deletes two thirds of the per-minute bill.</strong> In the current
+    stack, speech-out and the language model are 68% of the compute cost. A speech-to-speech
+    model has neither line: one model hears audio and emits audio.
+    Cascade with Opus 5 is <span class="lose">$0.0446</span> a call-minute; Gemini Live is
+    <span class="win">$0.0228</span>.<sup><a href="#n1">1</a></sup></p></li>
+
+    <li><p><strong>Self-hosting PersonaPlex is not a cost play.</strong> On an H100 at eight
+    concurrent streams it costs <span class="lose">$0.0355</span> per stream-minute in GPU time
+    alone, more than the entire managed duplex stack. It becomes cheaper only past roughly twelve
+    streams per GPU, or on small GPUs that scale to zero. The case for it is control, not
+    price.<sup><a href="#n2">2</a></sup></p></li>
+
+    <li><p><strong>One unmeasured number decides the whole question.</strong> Concurrent streams per
+    GPU. Every published figure I could find for a Moshi-class model is second-hand. Measure it
+    before committing to hardware; the answer moves the monthly bill by 8&times;.</p></li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="no">02</span> What breaks first</h2>
+  <div class="col">
+    <p>Elle today takes about 43 calls a month and never sees two at once. The ceilings below are
+    ordered by when they bite, and the first three are in our own code rather than in anyone's
+    pricing page.</p>
+  </div>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Ceiling</th><th class="n">Bites at</th><th>Why</th><th>Fix</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Per-instance state</td>
+            <td class="n">2 instances</td>
+            <td>SQLite lives on the container's own disk. Two Cloud Run instances hold two
+            different databases: caller history, consent, and the architecture override disagree
+            depending on which one answers.</td>
+            <td>Move to Cloud SQL or Firestore. The GCS archive made history durable; it did not
+            make it shared.</td>
+          </tr>
+          <tr>
+            <td class="name">Double-booking</td>
+            <td class="n">~5 concurrent</td>
+            <td>Booking reads free/busy, then writes. Two callers offered the same slot both pass
+            the check before either writes.</td>
+            <td>A short-lived hold row with a unique constraint on the slot, taken before the
+            calendar write.</td>
+          </tr>
+          <tr>
+            <td class="name">No overflow path</td>
+            <td class="n">capacity</td>
+            <td>When capacity runs out the caller gets silence. There is no queue, no callback
+            offer, no "we are busy" branch.</td>
+            <td>A TwiML fallback that offers a callback and captures the number.</td>
+          </tr>
+          <tr>
+            <td class="name">Vendor concurrency</td>
+            <td class="n">~10&ndash;50</td>
+            <td>Twilio caps concurrent calls per account, Deepgram caps concurrent streams, and
+            Anthropic rate limits are per-organisation.</td>
+            <td>Raise all three by ticket before a launch, not during one.</td>
+          </tr>
+          <tr>
+            <td class="name">Cold start under burst</td>
+            <td class="n">~25 concurrent</td>
+            <td>One min-instance. A burst above what one container holds starts new ones while
+            callers are already on the line.</td>
+            <td>Min-instances tracking the busy-hour floor, not one.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Ordered by the concurrency at which each becomes a live incident. Concurrency
+    estimates assume 3.5-minute calls arriving over an eight-hour business day with a 2.5&times;
+    busy-hour peak.<sup><a href="#n3">3</a></sup></p>
+  </div>
+  <div class="callout">
+    <span class="lab">Worth saying plainly</span>
+    <p>None of the first three cost money to fix. They are a week of work, and they are load-bearing
+    for every number in the rest of this document, because a cheaper per-minute price on a system
+    that loses bookings is not cheaper.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">03</span> Three ways to answer a phone</h2>
+  <div class="col">
+    <p><strong>The cascade, which is what runs today.</strong> Audio goes to Deepgram for
+    transcription, the transcript goes to Claude, Claude's text goes back to Deepgram for speech.
+    Three vendors, three network hops, and a turn cannot start until silence is detected. Our
+    endpointing is set to 1000&nbsp;ms, so every reply carries a full second of dead air before any
+    model has been asked anything. Realistic turn latency is 1.2 to 2.0 seconds.</p>
+
+    <p><strong>Managed duplex.</strong> Gemini Live on Vertex takes audio in and gives audio out
+    from a single model that is listening and speaking at the same time. There is no endpointing
+    parameter because there is no endpoint: interruption is a property of the model, not of a
+    timer. We already run this; it is one of the three providers behind the runtime switch.</p>
+
+    <p><strong>Self-hosted duplex.</strong> PersonaPlex is NVIDIA's full-duplex conversational
+    speech model, built on the Moshi architecture, with role prompts for persona and audio
+    conditioning for voice.<sup><a href="#n4">4</a></sup> Code is MIT; weights are under the NVIDIA
+    Open Model License and gated behind accepting terms on Hugging Face. It runs on our hardware,
+    which is the entire point: the voice can be cloned and fixed, the persona is a prompt we own,
+    no audio leaves the project, and there is no per-minute meter.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">04</span> What a call-minute costs</h2>
+  <div class="figure">
+    <div class="legend" role="list">
+      <span role="listitem"><i class="key k0"></i>telephony</span>
+      <span role="listitem"><i class="key k1"></i>speech in</span>
+      <span role="listitem"><i class="key k2"></i>speech out</span>
+      <span role="listitem"><i class="key k3"></i>model + bridge</span>
+      <span role="listitem"><i class="key k4"></i>GPU</span>
+    </div>
+    <div class="scroll"><svg viewBox="0 0 760 296" role="img" aria-labelledby="c1t" class="chart">
+<title id="c1t">Cost per call-minute by architecture, split into telephony, speech in, speech out, model and GPU</title>
+<line class="grid" x1="176.0" y1="26" x2="176.0" y2="270"/>
+<text class="tick" x="176.0" y="20" text-anchor="middle">$0.00</text>
+<line class="grid" x1="277.2" y1="26" x2="277.2" y2="270"/>
+<text class="tick" x="277.2" y="20" text-anchor="middle">$0.01</text>
+<line class="grid" x1="378.4" y1="26" x2="378.4" y2="270"/>
+<text class="tick" x="378.4" y="20" text-anchor="middle">$0.02</text>
+<line class="grid" x1="479.6" y1="26" x2="479.6" y2="270"/>
+<text class="tick" x="479.6" y="20" text-anchor="middle">$0.03</text>
+<line class="grid" x1="580.8" y1="26" x2="580.8" y2="270"/>
+<text class="tick" x="580.8" y="20" text-anchor="middle">$0.04</text>
+<line class="grid" x1="682.0" y1="26" x2="682.0" y2="270"/>
+<text class="tick" x="682.0" y="20" text-anchor="middle">$0.05</text>
+<text class="rowlab" x="162" y="59" text-anchor="end">Cascade + Opus 5</text>
+<rect class="seg s0" x="176.0" y="40" width="84.0" height="30" rx="0"><title>Cascade + Opus 5 — telephony: $0.0085/min</title></rect>
+<rect class="seg s1" x="262.0" y="40" width="56.7" height="30" rx="0"><title>Cascade + Opus 5 — speech-in: $0.0058/min</title></rect>
+<rect class="seg s2" x="320.7" y="40" width="134.6" height="30" rx="0"><title>Cascade + Opus 5 — speech-out: $0.0135/min</title></rect>
+<rect class="seg s3" x="457.3" y="40" width="168.0" height="30" rx="3"><title>Cascade + Opus 5 — model: $0.0168/min</title></rect>
+<text class="total" x="637.4" y="59">$0.0446</text>
+<text class="rowlab" x="162" y="105" text-anchor="end">Cascade + Haiku 4.5</text>
+<rect class="seg s0" x="176.0" y="86" width="84.0" height="30" rx="0"><title>Cascade + Haiku 4.5 — telephony: $0.0085/min</title></rect>
+<rect class="seg s1" x="262.0" y="86" width="56.7" height="30" rx="0"><title>Cascade + Haiku 4.5 — speech-in: $0.0058/min</title></rect>
+<rect class="seg s2" x="320.7" y="86" width="134.6" height="30" rx="0"><title>Cascade + Haiku 4.5 — speech-out: $0.0135/min</title></rect>
+<rect class="seg s3" x="457.3" y="86" width="38.4" height="30" rx="3"><title>Cascade + Haiku 4.5 — model: $0.0040/min</title></rect>
+<text class="total" x="507.7" y="105">$0.0318</text>
+<text class="rowlab" x="162" y="151" text-anchor="end">Gemini Live duplex</text>
+<rect class="seg s0" x="176.0" y="132" width="84.0" height="30" rx="0"><title>Gemini Live duplex — telephony: $0.0085/min</title></rect>
+<rect class="seg s3" x="262.0" y="132" width="142.6" height="30" rx="3"><title>Gemini Live duplex — model: $0.0143/min</title></rect>
+<text class="total" x="416.6" y="151">$0.0228</text>
+<text class="rowlab" x="162" y="197" text-anchor="end">PersonaPlex on L4</text>
+<rect class="seg s0" x="176.0" y="178" width="84.0" height="30" rx="0"><title>PersonaPlex on L4 — telephony: $0.0085/min</title></rect>
+<rect class="seg s3" x="262.0" y="178" width="38.4" height="30" rx="0"><title>PersonaPlex on L4 — model: $0.0040/min</title></rect>
+<rect class="seg s4" x="302.4" y="178" width="85.2" height="30" rx="3"><title>PersonaPlex on L4 — gpu: $0.0086/min</title></rect>
+<text class="total" x="399.6" y="197">$0.0211</text>
+<text class="rowlab" x="162" y="243" text-anchor="end">PersonaPlex on H100</text>
+<rect class="seg s0" x="176.0" y="224" width="84.0" height="30" rx="0"><title>PersonaPlex on H100 — telephony: $0.0085/min</title></rect>
+<rect class="seg s3" x="262.0" y="224" width="38.4" height="30" rx="0"><title>PersonaPlex on H100 — model: $0.0040/min</title></rect>
+<rect class="seg s4" x="302.4" y="224" width="356.8" height="30" rx="3"><title>PersonaPlex on H100 — gpu: $0.0355/min</title></rect>
+<text class="total" x="671.2" y="243">$0.0479</text>
+</svg></div>
+    <p class="cap">US dollars per call-minute, marginal cost only; the monthly floor is in
+    &sect;05. Assumes a 3.5-minute call, the assistant speaking half of it at 150 words per
+    minute, and two model turns a minute.<sup><a href="#n5">5</a></sup> GPU figures assume eight
+    concurrent streams per GPU at 65% utilisation.<sup><a href="#n2">2</a></sup></p>
+  </div>
+  <div class="col">
+    <p>Two things fall out of this. Speech-out is the most expensive line in the cascade at
+    $0.0135 a minute, more than double speech-in, because Aura-2 bills per character and the
+    assistant does half the talking.<sup><a href="#n6">6</a></sup> And the model line swings
+    5&times; on model choice alone: Opus 5 costs $0.0168 a call-minute against Haiku 4.5's
+    $0.0040.<sup><a href="#n7">7</a></sup></p>
+    <p>Which means the cheapest available change to the current system is not architectural. Moving
+    the SMS and booking turns to Haiku 4.5 while leaving Opus 5 on the calls that need judgment
+    takes 29% off the per-minute bill, today, with no new infrastructure.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">05</span> The monthly bill</h2>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Architecture</th>
+            <th class="n">1k min</th>
+            <th class="n">10k min</th>
+            <th class="n">100k min</th>
+            <th class="n">1M min</th>
+            <th class="n">$/min at 1M</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">Cascade + Opus 5<span class="sub">today's stack</span></td>
+            <td class="n">$151</td><td class="n">$553</td><td class="n">$4,572</td>
+            <td class="n">$45,704</td><td class="n">$0.0457</td>
+          </tr>
+          <tr>
+            <td class="name">Cascade + Haiku 4.5<span class="sub">one config change</span></td>
+            <td class="n">$139</td><td class="n">$425</td><td class="n">$3,292</td>
+            <td class="n">$32,904</td><td class="n">$0.0329</td>
+          </tr>
+          <tr>
+            <td class="name">Gemini Live<span class="sub">managed duplex, Vertex</span></td>
+            <td class="n">$130</td><td class="n">$335</td><td class="n">$2,392</td>
+            <td class="n win">$23,904</td><td class="n win">$0.0239</td>
+          </tr>
+          <tr class="rule-top">
+            <td class="name">PersonaPlex on L4<span class="sub">Cloud Run GPU, scales to zero, 2 streams/GPU</span></td>
+            <td class="n">$128</td><td class="n">$319</td><td class="n win">$2,224</td>
+            <td class="n win">$22,220</td><td class="n win">$0.0222</td>
+          </tr>
+          <tr>
+            <td class="name">PersonaPlex on H100<span class="sub">GKE, autoscaled, 8 streams/GPU</span></td>
+            <td class="n lose">$8,354</td><td class="n lose">$8,786</td>
+            <td class="n lose">$13,140</td><td class="n lose">$57,745</td><td class="n lose">$0.0577</td>
+          </tr>
+          <tr>
+            <td class="name">PersonaPlex on H100<span class="sub">GKE, reserved for peak, 3-year commit</span></td>
+            <td class="n lose">$3,861</td><td class="n lose">$3,974</td>
+            <td class="n lose">$12,404</td><td class="n lose">$123,202</td><td class="n lose">$0.1232</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">All-in monthly cost. Every row includes telephony, the model, the Cloud Run
+    bridge, and the fixed floor: a phone number,<sup><a href="#n8">8</a></sup> always-allocated
+    min-instances,<sup><a href="#n9">9</a></sup> Secret Manager,<sup><a href="#n10">10</a></sup>
+    logging,<sup><a href="#n11">11</a></sup> the GCS call archive,<sup><a href="#n12">12</a></sup>
+    Artifact Registry,<sup><a href="#n13">13</a></sup> and egress to
+    Twilio.<sup><a href="#n14">14</a></sup> GKE rows add the cluster fee, a load balancer, and
+    node boot disks.<sup><a href="#n15">15</a></sup> What is deliberately
+    <em>not</em> counted is at note&nbsp;16.<sup><a href="#n16">16</a></sup></p>
+  </div>
+  <div class="col">
+    <p>The last row is the trap, and it is the one a vendor will steer you toward. A three-year
+    commitment discounts the hourly rate by 55%, but you must reserve for the busy-hour peak and
+    then pay for all 730 hours in the month. With a 2.5&times; peak factor that is 2.5&times; the
+    hardware you average, running idle most of the time. Committed pricing turns a
+    utilisation problem into a contract.</p>
+    <p>Autoscaling inverts it: you pay for what you use, but the warm floor that keeps first
+    callers off a cold GPU costs $8,074 a month on one H100 whether anyone calls or not. At
+    1,000 minutes a month that floor is the entire bill, which is why the H100 row starts at
+    $8,354 and the managed row starts at $130.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">06</span> Where the crossover is</h2>
+  <div class="figure">
+    <div class="legend" role="list">
+      <span role="listitem"><i class="key" style="background:var(--muted)"></i>three-layer cascade</span>
+      <span role="listitem"><i class="key" style="background:var(--s3)"></i>managed duplex</span>
+      <span role="listitem"><i class="key" style="background:var(--s4)"></i>self-hosted duplex</span>
+      <span role="listitem">dashed = second option in that family</span>
+    </div>
+    <div class="scroll"><svg viewBox="0 0 760 400" role="img" aria-labelledby="c2t" class="chart">
+<title id="c2t">All-in cost per call-minute against monthly call volume, both scales logarithmic</title>
+<line class="grid" x1="66" y1="354.0" x2="608" y2="354.0"/>
+<text class="tick" x="56" y="358.0" text-anchor="end">$0.02</text>
+<line class="grid" x1="66" y1="305.6" x2="608" y2="305.6"/>
+<text class="tick" x="56" y="309.6" text-anchor="end">$0.05</text>
+<line class="grid" x1="66" y1="269.1" x2="608" y2="269.1"/>
+<text class="tick" x="56" y="273.1" text-anchor="end">$0.1</text>
+<line class="grid" x1="66" y1="220.7" x2="608" y2="220.7"/>
+<text class="tick" x="56" y="224.7" text-anchor="end">$0.25</text>
+<line class="grid" x1="66" y1="184.1" x2="608" y2="184.1"/>
+<text class="tick" x="56" y="188.1" text-anchor="end">$0.5</text>
+<line class="grid" x1="66" y1="147.5" x2="608" y2="147.5"/>
+<text class="tick" x="56" y="151.5" text-anchor="end">$1</text>
+<line class="grid" x1="66" y1="99.2" x2="608" y2="99.2"/>
+<text class="tick" x="56" y="103.2" text-anchor="end">$2.5</text>
+<line class="grid" x1="66" y1="62.6" x2="608" y2="62.6"/>
+<text class="tick" x="56" y="66.6" text-anchor="end">$5</text>
+<line class="grid" x1="66" y1="26.0" x2="608" y2="26.0"/>
+<text class="tick" x="56" y="30.0" text-anchor="end">$10</text>
+<line class="grid" x1="66.0" y1="26" x2="66.0" y2="354"/>
+<text class="tick" x="66.0" y="374" text-anchor="middle">1k</text>
+<line class="grid" x1="246.7" y1="26" x2="246.7" y2="354"/>
+<text class="tick" x="246.7" y="374" text-anchor="middle">10k</text>
+<line class="grid" x1="427.3" y1="26" x2="427.3" y2="354"/>
+<text class="tick" x="427.3" y="374" text-anchor="middle">100k</text>
+<line class="grid" x1="608.0" y1="26" x2="608.0" y2="354"/>
+<text class="tick" x="608.0" y="374" text-anchor="middle">1M</text>
+<polyline class="line f-base" points="66.0,247.1 152.2,280.7 246.7,300.3 332.9,307.6 427.3,310.4 513.5,310.4 608.0,310.4"/>
+<polyline class="line f-base alt" points="66.0,251.8 152.2,289.8 246.7,314.2 332.9,323.8 427.3,327.7 513.5,327.7 608.0,327.7"/>
+<polyline class="line f-man" points="66.0,255.3 152.2,297.4 246.7,326.7 332.9,339.3 427.3,344.6 513.5,344.6 608.0,344.6"/>
+<polyline class="line f-host" points="66.0,256.0 152.2,298.9 246.7,329.4 332.9,342.8 427.3,348.4 513.5,348.4 608.0,348.4"/>
+<polyline class="line f-host alt" points="66.0,35.5 152.2,92.9 246.7,154.4 332.9,206.9 427.3,254.6 513.5,283.0 608.0,298.0"/>
+<circle class="dot f-host alt" cx="608.0" cy="298.0" r="4"/>
+<text class="endlab f-host alt" x="625.0" y="302.0">PersonaPlex H100</text>
+<circle class="dot f-base" cx="608.0" cy="310.4" r="4"/>
+<path class="leader f-base" d="M613.0,310.4 L621.0,315.0"/>
+<text class="endlab f-base" x="625.0" y="319.0">Cascade + Opus 5</text>
+<circle class="dot f-base alt" cx="608.0" cy="327.7" r="4"/>
+<path class="leader f-base alt" d="M613.0,327.7 L621.0,332.0"/>
+<text class="endlab f-base alt" x="625.0" y="336.0">Cascade + Haiku</text>
+<circle class="dot f-man" cx="608.0" cy="344.6" r="4"/>
+<path class="leader f-man" d="M613.0,344.6 L621.0,349.0"/>
+<text class="endlab f-man" x="625.0" y="353.0">Gemini Live</text>
+<circle class="dot f-host" cx="608.0" cy="348.4" r="4"/>
+<path class="leader f-host" d="M613.0,348.4 L621.0,366.0"/>
+<text class="endlab f-host" x="625.0" y="370.0">PersonaPlex L4</text>
+<text class="axis" x="337" y="392" text-anchor="middle">call-minutes per month</text>
+</svg></div>
+    <p class="cap">All-in cost per call-minute against monthly volume, both axes logarithmic. The
+    fixed floor dominates below 10k minutes, which is why every line falls steeply and then
+    flattens. Above about 30k minutes the lines are flat and the ranking stops changing.</p>
+  </div>
+  <div class="col">
+    <p>Below 10,000 minutes a month, architecture is nearly irrelevant: you are paying for a warm
+    container and a phone number, and the difference between the best and worst option is $24 a
+    month. Above 30,000 the marginal rate is all that matters and the order is fixed.</p>
+    <p>The H100 line never catches the others at these volumes. It is still falling at 1M minutes
+    because the warm floor is still amortising; it would cross Gemini Live somewhere past 4M
+    minutes a month, which is a 40-seat call center running flat out.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">07</span> The number that decides it</h2>
+  <div class="col">
+    <p>Everything above rests on how many concurrent conversations one GPU holds while staying
+    real-time. A Moshi-class model needs roughly 16&ndash;20&nbsp;GB in fp16, which fits an
+    L4's 24&nbsp;GB with no room for KV cache growth, and fits an H100's 80&nbsp;GB with room to
+    batch. Published guidance suggests four to eight sessions on a 48&ndash;80&nbsp;GB card, but
+    that figure is second-hand and I could not reach the paper to confirm
+    it.<sup><a href="#n4">4</a></sup> Treat the table below as the shape of the answer, not the
+    answer.</p>
+  </div>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Streams per GPU</th>
+          <th class="n">L4, Cloud&nbsp;Run</th>
+          <th class="n">A100 40&nbsp;GB</th>
+          <th class="n">H100 on demand</th>
+          <th class="n">H100 3-yr commit</th>
+          <th>vs. Gemini Live at $0.0135</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="n">2</td><td class="n">$0.0086</td><td class="n">$0.0471</td>
+              <td class="n">$0.1418</td><td class="n">$0.0638</td>
+              <td>L4 only</td></tr>
+          <tr><td class="n">4</td><td class="n">$0.0043</td><td class="n">$0.0235</td>
+              <td class="n">$0.0709</td><td class="n">$0.0319</td>
+              <td>L4 only</td></tr>
+          <tr><td class="n">8</td><td class="n">$0.0022</td><td class="n">$0.0118</td>
+              <td class="n">$0.0354</td><td class="n">$0.0160</td>
+              <td>L4, A100</td></tr>
+          <tr><td class="n">12</td><td class="n">$0.0014</td><td class="n">$0.0078</td>
+              <td class="n">$0.0236</td><td class="n">$0.0106</td>
+              <td>everything but on-demand H100</td></tr>
+          <tr><td class="n">16</td><td class="n">$0.0011</td><td class="n">$0.0059</td>
+              <td class="n">$0.0177</td><td class="n">$0.0080</td>
+              <td>everything but on-demand H100</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">GPU cost per stream-minute at 65% utilisation.<sup><a href="#n2">2</a></sup>
+    The rightmost column names the hardware that beats managed duplex on compute at that
+    density.</p>
+  </div>
+  <div class="col">
+    <p>Measuring this is two days of work and it is the highest-value two days in the whole plan:
+    stand one GPU up, drive N synthetic conversations at it from recorded call audio, and find the
+    N at which time-to-first-audio crosses 300&nbsp;ms or the model starts falling behind
+    real-time. The answer sets the hardware, the fleet size, and whether this is worth doing at
+    all.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">08</span> What integration actually costs us</h2>
+  <div class="col">
+    <p>The provider seam is already there. Realtime models sit behind one interface with three
+    implementations, chosen per call, with a runtime override and a TTL. Adding a fourth is one
+    file and one enum value.</p>
+  </div>
+  <pre>src/realtime/
+  factory.ts          VoiceProvider = "deepgram" | "openai" | "gemini" | "personaplex"
+  personaPlex.ts      new: WebSocket to the inference service, PCM16 in and out
+  audio/g711.ts       already converts mu-law 8 kHz to PCM16 and resamples 8k to 24k</pre>
+  <div class="col">
+    <p>The audio plumbing is done. Gemini Live already needs PCM16 in at 16&nbsp;kHz and out at
+    24&nbsp;kHz, so the stateful resampler with carries across chunk boundaries already exists and
+    is already verified. PersonaPlex speaks the same shape.</p>
+
+    <h3>The part that is genuinely new</h3>
+    <p>A speech-to-speech model does not emit tool calls. Elle's job is booking: she checks a
+    calendar, writes a hold, sends a confirmation. PersonaPlex will happily discuss a Thursday
+    appointment and cannot make one.</p>
+    <p>The pattern that solves it is a supervisor. The duplex model owns the conversation; its
+    transcript stream feeds a cheap text model that owns the tools and writes results back into
+    the duplex model's context as it goes. That keeps the latency win, because the caller hears
+    the duplex model immediately while the booking resolves behind it, and it costs one Haiku turn
+    per exchange, which is the $0.0040 a minute already in the tables.</p>
+    <p>It also means the failure modes multiply. The supervisor can lag the conversation, and the
+    caller can be told a slot is held a second before the write fails. That needs designing, not
+    discovering.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">09</span> What I would do</h2>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Stage</th><th>Trigger</th><th>Work</th><th class="n">Cost impact</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Fix the state</td>
+            <td>Before any volume at all</td>
+            <td>Shared database, a booking lock, an overflow branch. Nothing else on this list is
+            safe without it.</td>
+            <td class="n">~$40/mo<span class="sub">smallest Cloud SQL instance</span></td>
+          </tr>
+          <tr>
+            <td class="name">Split the models</td>
+            <td>Now</td>
+            <td>Haiku 4.5 on SMS and booking turns, Opus 5 on calls. One config change.</td>
+            <td class="n win">&minus;29%</td>
+          </tr>
+          <tr>
+            <td class="name">Move calls to duplex</td>
+            <td>Past 10k min/mo</td>
+            <td>Flip the runtime switch to Gemini Live for voice, keep the cascade as the fallback
+            provider. Both already exist.</td>
+            <td class="n win">&minus;46%</td>
+          </tr>
+          <tr>
+            <td class="name">Benchmark PersonaPlex</td>
+            <td>Past 50k min/mo, or any voice/persona requirement Gemini cannot meet</td>
+            <td>One GPU, synthetic load, find streams-per-GPU. Two days.</td>
+            <td class="n">~$500<span class="sub">one-off</span></td>
+          </tr>
+          <tr>
+            <td class="name">Self-host</td>
+            <td>Only if the benchmark clears 12 streams per GPU, or control is worth the premium</td>
+            <td>Supervisor pattern, GPU autoscaling, a real on-call rotation. This is where you
+            start operating infrastructure rather than consuming it.</td>
+            <td class="n">see &sect;05</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Triggers are volumes, not dates. Nothing here needs doing before the volume
+    that justifies it, except the first row, which needs doing regardless.</p>
+  </div>
+  <div class="callout">
+    <span class="lab">The honest summary</span>
+    <p>At today's volume, managed duplex is cheaper, lower-latency, and less work than anything we
+    would host. Self-hosting PersonaPlex is worth doing when we need a voice and a persona that are
+    ours, when audio cannot leave the project, or when a vendor's per-minute rate becomes a
+    negotiating position we do not like. Those are good reasons. Saving money at 100,000 minutes a
+    month is not one of them.</p>
+  </div>
+</section>
+
+<section class="notes">
+  <h2><span class="no">10</span> Rates, sources, assumptions</h2>
+  <div class="col">
+    <p>Every figure in this document derives from the constants below. All are US list prices in
+    <span class="m">us-central1</span> as published in August 2026, before any negotiated
+    discount. The model that produces the tables is in the repository at
+    <span class="m">tools/scale-model.py</span>, so a rate change is a one-line edit and a rerun.</p>
+  </div>
+  <ol>
+    <li id="n1"><strong>Cascade against duplex.</strong> Cascade + Opus 5 marginal cost is
+    telephony $0.0085 + speech-in $0.0058 + speech-out $0.0135 + model and bridge $0.0168 =
+    <span class="m">$0.0446</span>. Gemini Live is telephony $0.0085 + model and bridge $0.0143 =
+    <span class="m">$0.0228</span>. Speech-out plus model is $0.0303 of $0.0446, or 68%.</li>
+
+    <li id="n2"><strong>GPU cost per stream-minute.</strong>
+    <span class="m">rate &divide; streams &divide; 60 &divide; utilisation</span>. Rates:
+    <span class="m">a3-highgpu-1g</span> (1&times;H100 80&nbsp;GB) $11.06/hr on demand;
+    <span class="m">a2-highgpu-1g</span> (1&times;A100 40&nbsp;GB) ~$3.67/hr;
+    Cloud Run L4 $0.0001867/GPU-second, or $0.672/hr, without zonal redundancy;
+    3-year committed use discount taken at 55% off. Utilisation is 65%, which allows for
+    scale-up lag and partially filled GPUs. At eight streams on an on-demand H100 that is
+    <span class="m">11.06 / 8 / 60 / 0.65 = $0.0354</span>.
+    <a href="https://www.thundercompute.com/blog/google-cloud-gpu-instances">GCP GPU instance pricing</a>,
+    <a href="https://cloud.google.com/run/pricing">Cloud Run pricing</a>.</li>
+
+    <li id="n3"><strong>Concurrency.</strong> Business-hour wall clock is 8&nbsp;h &times; 22 days
+    = 10,560 minutes a month. Average concurrency is monthly minutes divided by that; peak is
+    2.5&times; average. At 100k minutes: <span class="m">9.5 average, 24 peak</span>. At 1M:
+    <span class="m">94.7 average, 237 peak</span>. Average call length 3.5 minutes.</li>
+
+    <li id="n4"><strong>PersonaPlex.</strong> NVIDIA, built on the Moshi architecture and weights,
+    with role-prompt persona control and audio-conditioned voice. Code MIT, weights under the
+    NVIDIA Open Model License with terms accepted on Hugging Face. Memory and concurrency figures
+    for Moshi-class models are from secondary sources; arxiv.org was unreachable from this network,
+    so the paper's own latency and throughput claims are <em>not</em> verified here.
+    <a href="https://github.com/NVIDIA/personaplex">github.com/NVIDIA/personaplex</a>.</li>
+
+    <li id="n5"><strong>Conversation shape.</strong> 3.5-minute call; assistant speaks 50% of it;
+    150 words per minute, taken as 900 characters per spoken minute; two model turns per minute;
+    per turn 6,000 cached input tokens, 400 fresh input tokens, 120 output tokens. Cached input
+    billed at 0.1&times; input.</li>
+
+    <li id="n6"><strong>Deepgram.</strong> Nova-3 multilingual streaming $0.0058/min (monolingual
+    $0.0048). Aura-2 $0.030 per 1,000 characters, so 450 characters a call-minute is
+    <span class="m">$0.0135</span>.
+    <a href="https://deepgram.com/learn/introducing-aura-2-enterprise-text-to-speech">Aura-2</a>.</li>
+
+    <li id="n7"><strong>Language models.</strong> Claude Opus 5 $5.00 in / $25.00 out per million
+    tokens; Claude Haiku 4.5 $1.00 / $5.00. Per call-minute at two turns: Opus 5
+    <span class="m">$0.0160</span>, Haiku 4.5 <span class="m">$0.0032</span>; the figures in
+    &sect;04 add the $0.0008 Cloud Run bridge. Gemini Live on Vertex is $3.00 per million audio
+    input tokens and $12.00 per million audio output tokens at 25 tokens per second of audio,
+    giving <span class="m">60&times;25&times;3/1e6 + 30&times;25&times;12/1e6 = $0.0135</span> a
+    call-minute. Vertex-hosted Claude is priced by Google and differs from the Anthropic list
+    rates used here.</li>
+
+    <li id="n8"><strong>Phone number.</strong> $1.15 per local number per month. Inbound voice
+    $0.0085/min to a programmable-voice number. Elastic SIP trunking would cut inbound to
+    $0.0034/min, worth $5,100 a month at 1M minutes, at the cost of running SIP.
+    <a href="https://www.twilio.com/en-us/sip-trunking/pricing/us">Twilio SIP pricing</a>.</li>
+
+    <li id="n9"><strong>Cloud Run min-instances.</strong> Always-allocated CPU at
+    $0.000018/vCPU-second and $0.000002/GiB-second. One 2&nbsp;vCPU / 2&nbsp;GiB instance held for
+    730 hours is <span class="m">$105.12</span> a month. One instance per 25 concurrent calls, so
+    the 1M-minute rows carry ten, at $1,051. Per-call compute on top is
+    <span class="m">$0.0008</span> a minute at 0.5&nbsp;vCPU and 0.5&nbsp;GiB.</li>
+
+    <li id="n10"><strong>Secret Manager.</strong> $0.06 per active secret version per month across
+    seven secrets, plus $0.03 per 10,000 access operations: <span class="m">$0.42</span> at low
+    volume, <span class="m">$1.28</span> at 1M minutes.</li>
+
+    <li id="n11"><strong>Cloud Logging.</strong> $0.50 per GiB ingested beyond 50&nbsp;GiB free. At
+    roughly 2&nbsp;KB per call-minute even 1M minutes is 1.9&nbsp;GiB, so this is
+    <span class="m">$0.00</span> at every volume modelled. It stops being free if you start logging
+    audio.</li>
+
+    <li id="n12"><strong>GCS call archive.</strong> Standard storage $0.020 per GB-month. One
+    JSON snapshot per call at about 8&nbsp;KB, retained twelve months: <span class="m">$0.05</span>
+    a month at 100k minutes, <span class="m">$0.52</span> at 1M. The cheapest line in the
+    document and the one that keeps the transcripts.</li>
+
+    <li id="n13"><strong>Artifact Registry.</strong> $0.10 per GB-month beyond 0.5&nbsp;GB free; a
+    2&nbsp;GiB image is <span class="m">$0.15</span>. Cloud Build stays inside its free 2,500
+    build-minutes at our deploy cadence.</li>
+
+    <li id="n14"><strong>Egress.</strong> Mu-law 8&nbsp;kHz is 8&nbsp;KB/s, so about 480&nbsp;KB
+    per call-minute leaves Cloud Run for Twilio. At $0.12 per GB that is
+    <span class="m">$5.49</span> a month at 100k minutes and <span class="m">$54.93</span> at 1M.
+    Small, but it grows linearly and nobody budgets it.</li>
+
+    <li id="n15"><strong>GKE rows only.</strong> Cluster management $0.10/hr =
+    <span class="m">$73</span>, one internal load balancer <span class="m">$18</span>, and
+    100&nbsp;GB SSD boot disk per GPU node at $0.17/GB = <span class="m">$17</span> per node. At
+    237 peak concurrent and eight streams per GPU that is 30 nodes, <span class="m">$510</span> in
+    disk alone.</li>
+
+    <li id="n16"><strong>Not counted.</strong> Engineering time, GCP support (Standard is $29/mo or
+    3% of spend, whichever is greater, which at 1M minutes is not $29), the A2P messaging campaign,
+    a second region for failover, and any negotiated rate. Every figure here is list price for one
+    region with no redundancy, which makes them a floor rather than a forecast.</li>
+  </ol>
+</section>
+
+<footer>
+  <span>Prepared for LetsTalk / Elle</span>
+  <span>List prices, us-central1, August 2026</span>
+</footer>
+
+</div>

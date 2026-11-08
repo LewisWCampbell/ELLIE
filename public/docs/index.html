@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview · Elle Docs</title>
+<meta name="description" content="How Elle, an AI phone, SMS, and web assistant, is engineered end to end.">
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Elle, documented end to end</h1>
+<p class="lead">Elle is an AI assistant that answers a real phone number, texts, and chats on the
+web on behalf of one person, Lewis W. Campbell. She represents his work, answers questions
+grounded in his actual resume, and books intro calls onto his calendar. This site documents how
+every part of her is built, down to the file and the design decision.</p>
+
+<p>Three things make Elle worth documenting rather than just demoing:</p>
+<ul>
+  <li><strong>She is a real-time voice agent built from parts, not a platform.</strong> Streaming
+  speech-to-text, a text LLM, and streaming text-to-speech are orchestrated by hand: sentence
+  streaming, barge-in, echo suppression, a 20&nbsp;ms audio pacer, and prompt caching are all
+  code in this repository, not vendor checkboxes.</li>
+  <li><strong>Every channel shares one brain.</strong> Phone, SMS, and web chat run the same
+  persona, the same knowledge grounding, the same booking tools, and the same memory, so a
+  conversation can start on a call and continue by text.</li>
+  <li><strong>The architecture is swappable at runtime.</strong> Two complete voice
+  architectures live behind one interface, and the active one can be switched per-call without
+  a deploy. The same seam is where future architectures (a fused duplex talker with inference
+  escalation) plug in.</li>
+</ul>
+
+<h2>Why an interaction model is a requirement, not a refinement</h2>
+<p>The second layer of the model below, <strong>interaction</strong>, is the one this project
+treats as load-bearing. That is not a private opinion. Over 2026 three independent labs
+published the same conclusion from three different directions: turn-taking is not a detail to
+be tuned around the edges of a language model, it is its own problem, and a conversational
+agent that does not model it explicitly will fail in real conversation no matter how good its
+reasoning is.</p>
+<ul>
+  <li><strong>Thinking Machines</strong> argues that interactivity belongs inside the
+  architecture rather than in an external harness, and calls the prevailing turn-based stack a
+  stopgap: a voice activity detector decides when you have finished speaking without
+  understanding a word you said. Their framing is that today's interfaces make humans
+  "contort themselves" to the machine, batching thoughts and phrasing questions like
+  emails, because the machine can only accept one finished turn at a
+  time.<sup class="cite"><a href="#ref1">1</a></sup></li>
+  <li><strong>OpenAI</strong> reached the same place structurally with GPT-Live: the turn
+  detector is removed from the audio path entirely, the conversation runs full duplex, and
+  deeper reasoning, search, and tool use are escalated <em>asynchronously</em> to frontier
+  models rather than blocking the voice
+  loop.<sup class="cite"><a href="#ref2">2</a></sup></li>
+  <li><strong>ElevenLabs</strong> states the failure mode in production terms: most voice AI
+  breaks in real conversation because it cannot handle interruption, silence, or context that
+  carries across turns. Notably, the architecture they describe building toward true
+  interaction models is an <em>advanced cascade</em>, in-house speech-to-text and
+  text-to-speech with a stack tuned for low latency, which is exactly the shape Elle
+  is.<sup class="cite"><a href="#ref3">3</a></sup></li>
+  <li><strong>Sean Goedecke</strong>, writing independently as an engineer rather than a
+  vendor, reads the same release and reaches the same structural
+  conclusion.<sup class="cite"><a href="#ref4">4</a></sup></li>
+</ul>
+<p>The distinction that matters for these docs is between <em>having</em> an interaction layer
+and <em>fusing</em> it into a model. Elle has one, and it is written by hand: barge-in
+gating with a minimum-character threshold and a grace window, echo suppression, a
+20&nbsp;ms drift-corrected audio pacer, turn-sequence cancellation, sentence-level streaming,
+and endpointing tuned on real calls. Those are not incidental features; they <em>are</em>
+layer two, implemented as code because it is not yet fused into a model.
+<a href="architecture.html">Architecture</a> explains where that leaves Elle on the fusion
+spectrum and why fusing layers 1 and 2, while deliberately keeping 3 and 4 separate, is the
+roadmap.</p>
+<div class="note">Read the citations as the argument for <em>why</em> the layer must exist, not
+as a claim that Elle is built the way any of these labs build. Three of the four are describing
+models that fuse the layer; Elle implements it as orchestration, and
+<a href="architecture.html">Architecture</a> is explicit about that trade.</div>
+<ol class="refs">
+  <li id="ref1"><span class="n">1</span>Thinking Machines Lab, "Interaction Models: A Scalable
+  Approach to Human-AI Collaboration."
+  <a href="https://thinkingmachines.ai/blog/interaction-models/" rel="noopener noreferrer" target="_blank">thinkingmachines.ai/blog/interaction-models</a></li>
+  <li id="ref2"><span class="n">2</span>OpenAI, "Continuous voice interaction with GPT-Live."
+  <a href="https://openai.com/index/continuous-voice-interaction-with-gpt-live/" rel="noopener noreferrer" target="_blank">openai.com/index/continuous-voice-interaction-with-gpt-live</a></li>
+  <li id="ref3"><span class="n">3</span>ElevenLabs, "Interaction models: Building natural
+  human-AI dialogue."
+  <a href="https://elevenlabs.io/blog/interaction-models" rel="noopener noreferrer" target="_blank">elevenlabs.io/blog/interaction-models</a></li>
+  <li id="ref4"><span class="n">4</span>Sean Goedecke, "Thinking Machines and interaction
+  models."
+  <a href="https://www.seangoedecke.com/interaction-models/" rel="noopener noreferrer" target="_blank">seangoedecke.com/interaction-models</a></li>
+</ol>
+
+<h2>The system at a glance</h2>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Phone caller<small>Twilio number</small></div>
+    <div class="dnode">SMS<small>same number</small></div>
+    <div class="dnode">Web visitor<small>lewiswcampbell.com</small></div>
+    <div class="dnode">Owner<small>private intake channel</small></div>
+  </div>
+  <div class="drow"><span class="darrow">↓ &nbsp; webhooks &amp; WebSockets</span></div>
+  <div class="drow">
+    <div class="dnode hot">Express + ws on Cloud Run<small>src/index.ts · one service, min-instances=1</small></div>
+  </div>
+  <div class="drow"><span class="darrow">↓</span></div>
+  <div class="drow">
+    <div class="dnode">Realtime voice bridge<small>twilioBridge.ts + deepgramCascade.ts</small></div>
+    <div class="dnode">Turn engine<small>ai.ts (web chat, cascaded voice)</small></div>
+    <div class="dnode">SMS agent<small>sms.ts</small></div>
+  </div>
+  <div class="drow"><span class="darrow">↓ &nbsp; shared foundations</span></div>
+  <div class="drow">
+    <div class="dnode good">Persona<small>persona.ts</small></div>
+    <div class="dnode good">Knowledge (RAG)<small>knowledge.ts · BM25</small></div>
+    <div class="dnode good">Booking<small>booking/ · Google Calendar</small></div>
+    <div class="dnode good">Memory<small>db.ts · SQLite</small></div>
+    <div class="dnode good">LLM providers<small>llm/ · Claude, swappable</small></div>
+  </div>
+  <p class="cap">One Cloud Run service, one brain, many mouths. Every box is a documented module;
+  the <a href="reference.html">code reference</a> maps all of them.</p>
+</div>
+
+<h2>What she can do</h2>
+<div class="grid2">
+  <div class="card"><h3>Hold a phone conversation</h3>
+    <p>Sub-second first audio, interruptible mid-sentence, an uninterruptible greeting, and echo
+    suppression tuned on real calls. <a href="voice-pipeline.html">The voice pipeline →</a></p></div>
+  <div class="card"><h3>Switch languages mid-call</h3>
+    <p>English and Spanish with automatic detection: the caller just starts speaking Spanish and
+    Elle follows, voice and all. <a href="languages.html">Bilingual mode →</a></p></div>
+  <div class="card"><h3>Book real meetings</h3>
+    <p>Tentative holds on a real Google Calendar, confirmed by the owner, with a
+    carrier-compliant SMS consent flow. <a href="booking.html">Booking and compliance →</a></p></div>
+  <div class="card"><h3>Pair a browser with a live call</h3>
+    <p>A pairing code spoken on the phone links a browser: live transcripts both ways, and typed
+    messages that Elle answers out loud. <a href="channels.html">Web, SMS and intake →</a></p></div>
+  <div class="card"><h3>Run cheaply at any volume</h3>
+    <p>Three layers of prompt caching plus turn batching; documented crossover math for when
+    self-hosting wins. <a href="cost.html">Cost engineering →</a></p></div>
+  <div class="card"><h3>Defend herself</h3>
+    <p>Signature-validated webhooks, HMAC-guarded audio sockets, rate limits, and a
+    repeat-caller abuse policy. <a href="security.html">Security →</a></p></div>
+</div>
+
+<h2>How to read these docs</h2>
+<p><a href="architecture.html">Architecture</a> explains the shape of the system and the theory
+behind it, including the four-layer model of voice agents and why Elle sits where she does on
+the fusion spectrum. The pipeline pages (<a href="voice-pipeline.html">voice</a>,
+<a href="languages.html">languages</a>, <a href="channels.html">channels</a>,
+<a href="booking.html">booking</a>) go component by component with real code excerpts. The
+foundation pages (<a href="data.html">data</a>, <a href="security.html">security</a>,
+<a href="cost.html">cost</a>, <a href="operations.html">operations</a>) cover what keeps it
+correct, safe, and affordable. <a href="reference.html">Code reference</a> is the file-by-file
+atlas: every source file, what it owns, and how it connects. And <a href="diagrams.html">Diagrams</a> collects every sequence diagram and the ERD in one place; each also appears in context on its home page. For lookup rather than reading, the <a href="features.html">feature index</a> lists every capability in one line each, the <a href="glossary.html">glossary</a> defines every term and variable, and <a href="database.html">the database</a> documents the schema column by column.</p>
+
+<div class="note">Code excerpts on this site are copied from the repository and lightly
+trimmed for width. Nothing here contains a credential: every secret lives in GCP Secret
+Manager and reaches the process only as an environment variable at runtime, and configuration
+is documented by variable <em>name</em> only.</div>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

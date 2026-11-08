@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.env
+profile.md
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Built documentation. Regenerate with `npm run docs:pdf`; the source of truth
+# is public/docs, so a stale copy in git is worse than no copy.
+Elle-Documentation.html
+Elle-Documentation.pdf
+voice-previews/
+
+# Generated diagram fragments. gen_diagrams.py inlines them into public/docs,
+# which is what actually ships; these are intermediate output kept for
+# inspection when a diagram looks wrong.
+tools/svg/
+
+# Private content: lives in the working tree and in deploys, never in git.
+knowledge/
+course/
+
+# Python bytecode from the training tools.
+__pycache__/
+*.pyc
+
+# Per-project GCP settings; the .example is committed.
+training/gcp/gcp.env

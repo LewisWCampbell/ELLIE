@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The voice pipeline · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>The voice pipeline</h1>
+<p class="lead">From a caller's breath to Elle's first word back in about a second: how audio
+flows through the realtime path, where every millisecond goes, and the three-layer defense
+that makes her interruptible everywhere except her opening line.</p>
+
+<h2>The path of one spoken turn</h2>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Twilio Media Streams<small>G.711 μ-law · 8 kHz · 20 ms frames</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Bridge<small>twilioBridge.ts</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Deepgram STT<small>streaming WS, VAD + endpointing</small></div>
+  </div>
+  <div class="drow">
+    <span class="darrow">→</span>
+    <div class="dnode hot">Cascade turn loop<small>deepgramCascade.ts</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Claude<small>streaming, tools, cached prompt</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Aura TTS<small>warm WS, μ-law out</small></div>
+  </div>
+  <div class="drow">
+    <span class="darrow">→</span>
+    <div class="dnode">Pacer<small>drift-corrected 20 ms frame pump</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Caller hears Elle</div>
+  </div>
+  <p class="cap">Audio stays μ-law 8 kHz end to end, Deepgram accepts and produces exactly
+  Twilio's wire format, so no transcoding happens anywhere.</p>
+</div>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 820 492" width="820" height="492" role="img" aria-label="Call setup and the uninterruptible greeting"><defs><marker id="ah-setup" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="484"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="484"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="484"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="484"/><line class="sdg-life" x1="730" y1="46" x2="730" y2="484"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Caller</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">Twilio</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">/voice-realtime</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">Bridge</text></g><g class="sdg-actor"><rect x="656" y="8" width="148" height="30" rx="7"/><text x="730" y="27" text-anchor="middle">Cascade</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">dials the number</text><line class="sdg-msg" x1="250" y1="108" x2="406" y2="108" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="330" y="102" text-anchor="middle">POST webhook (signed)</text><g class="sdg-note"><rect x="151" y="140" width="519" height="26" rx="5"/><text x="410" y="157" text-anchor="middle">verify Twilio signature · assess caller tier (normal / limited / blocked)</text></g><line class="sdg-ret" x1="410" y1="182" x2="254" y2="182" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="330" y="176" text-anchor="middle">TwiML &lt;Connect&gt;&lt;Stream&gt; + HMAC media token</text><line class="sdg-msg" x1="250" y1="216" x2="566" y2="216" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="410" y="210" text-anchor="middle">WS /media · start frame</text><g class="sdg-note"><rect x="334" y="248" width="472" height="26" rx="5"/><text x="570" y="265" text-anchor="middle">verifyMediaToken: recompute HMAC, 5-min age, constant-time compare</text></g><line class="sdg-msg" x1="570" y1="290" x2="726" y2="290" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="650" y="284" text-anchor="middle">create model (static persona + per-call context)</text><path class="sdg-msg" d="M 730 324 h 34 v 18 h -30" fill="none" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="772" y="336" text-anchor="start">greet(): deterministic line, no LLM round-trip</text><line class="sdg-ret" x1="730" y1="368" x2="574" y2="368" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="650" y="362" text-anchor="middle">greeting audio, streamed as it synthesizes</text><line class="sdg-msg" x1="570" y1="402" x2="94" y2="402" marker-end="url(#ah-setup)"/><text class="sdg-lbl" x="330" y="396" text-anchor="middle">paced 20 ms frames · first audio ≈300 ms</text><g class="sdg-note"><rect x="363" y="434" width="445" height="26" rx="5"/><text x="585" y="451" text-anchor="middle">barge-in stays locked until every greeting frame has been SENT</text></g></svg><figcaption>Call setup: signature gate, media-token gate, then a greeting that always plays to the end.</figcaption></figure>
+<h2>Hearing: STT with intent-gated barge-in</h2>
+<p>Deepgram's stream does voice-activity detection and endpointing server-side. But its raw
+<code>SpeechStarted</code> event fires on any sound (a breath, a cough, line noise, an echo of
+Elle's own voice), and using it directly meant callers' background noise cut her off
+mid-sentence. Interruption is instead gated on <em>recognized words</em>:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgram/stt.ts</div><pre>// Note: we deliberately do NOT barge in on the raw `SpeechStarted` VAD event
+// — it fires on any sound (breath, cough, line noise, echo of Elle's own
+// voice) and was cutting her off. Barge-in is gated on recognized words.
+if (!this.barged &amp;&amp; text.length &gt;= config.deepgram.bargeInMinChars) {
+  this.barged = true;
+  console.log(`[voice] barge-in trigger: "${text}"`);
+  this.h.onSpeechStarted?.();
+}</pre></div>
+<p>Utterance boundaries come from two paths: <code>speech_final</code> (the fast endpointing
+path, tuned by <code>DEEPGRAM_ENDPOINTING_MS</code>) and <code>UtteranceEnd</code> (a
+slower &ge;1s fallback). Both are logged, because which path fires is itself a diagnostic: turns
+that keep flushing via the fallback mean the noise floor is holding the VAD open.</p>
+
+<h2>Thinking out loud: sentence streaming</h2>
+<p>The single biggest latency lever in a cascade: don't wait for the whole reply. The LLM
+streams tokens; the moment a complete sentence exists, it goes to TTS while the rest is still
+being generated:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts · chatSpeaking()</div><pre>// Emit a chunk once a sentence has clearly ended (punctuation followed by
+// whitespace) and it's long enough to sound natural on its own.
+const SENTENCE_RE = /^([\s\S]{15,}?[.!?…]["')\]]?)\s+([\s\S]*)$/;
+const resp = await this.llm.chatStream(req, (delta) =&gt; {
+  if (seq !== this.turnSeq) return;
+  buffer += delta;
+  let m: RegExpExecArray | null;
+  while ((m = SENTENCE_RE.exec(buffer))) {
+    speakChunk(m[1]);   // → TTS, while generation continues
+    buffer = m[2];
+  }
+});</pre></div>
+<p>Meanwhile the TTS socket is <em>pre-warmed during LLM thinking</em>, so the connection
+handshake overlaps generation instead of delaying the first audible word. One TTS WebSocket
+stays open per voice for the whole call; no sentence pays a fresh TLS handshake.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 860 474" width="860" height="474" role="img" aria-label="One spoken turn through the cascade"><defs><marker id="ah-turn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="80" y1="46" x2="80" y2="466"/><line class="sdg-life" x1="220" y1="46" x2="220" y2="466"/><line class="sdg-life" x1="360" y1="46" x2="360" y2="466"/><line class="sdg-life" x1="500" y1="46" x2="500" y2="466"/><line class="sdg-life" x1="640" y1="46" x2="640" y2="466"/><line class="sdg-life" x1="780" y1="46" x2="780" y2="466"/><g class="sdg-actor"><rect x="16" y="8" width="128" height="30" rx="7"/><text x="80" y="27" text-anchor="middle">Caller</text></g><g class="sdg-actor"><rect x="156" y="8" width="128" height="30" rx="7"/><text x="220" y="27" text-anchor="middle">Deepgram STT</text></g><g class="sdg-actor"><rect x="296" y="8" width="128" height="30" rx="7"/><text x="360" y="27" text-anchor="middle">Cascade</text></g><g class="sdg-actor"><rect x="436" y="8" width="128" height="30" rx="7"/><text x="500" y="27" text-anchor="middle">Claude</text></g><g class="sdg-actor"><rect x="576" y="8" width="128" height="30" rx="7"/><text x="640" y="27" text-anchor="middle">Aura TTS</text></g><g class="sdg-actor"><rect x="716" y="8" width="128" height="30" rx="7"/><text x="780" y="27" text-anchor="middle">Bridge</text></g><line class="sdg-msg" x1="80" y1="74" x2="216" y2="74" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="150" y="68" text-anchor="middle">μ-law audio, streamed</text><line class="sdg-ret" x1="220" y1="108" x2="356" y2="108" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="290" y="102" text-anchor="middle">interim transcripts (echo-filtered)</text><line class="sdg-msg" x1="220" y1="142" x2="356" y2="142" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="290" y="136" text-anchor="middle">speech_final → utterance + language tag</text><path class="sdg-msg" d="M 360 176 h 34 v 18 h -30" fill="none" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="402" y="188" text-anchor="start">merge queued utterances into ONE turn</text><line class="sdg-msg" x1="360" y1="220" x2="636" y2="220" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="500" y="214" text-anchor="middle">warm(): connect overlaps thinking</text><line class="sdg-msg" x1="360" y1="254" x2="496" y2="254" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="430" y="248" text-anchor="middle">chatStream (cached prefix + conversation)</text><line class="sdg-ret" x1="500" y1="288" x2="364" y2="288" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="430" y="282" text-anchor="middle">tokens… first full sentence</text><line class="sdg-msg" x1="360" y1="322" x2="636" y2="322" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="500" y="316" text-anchor="middle">Speak(sentence 1) while generation continues</text><line class="sdg-ret" x1="640" y1="356" x2="364" y2="356" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="500" y="350" text-anchor="middle">audio chunks → exact 160-byte frames</text><line class="sdg-msg" x1="360" y1="390" x2="776" y2="390" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="570" y="384" text-anchor="middle">onAudioDelta per 20 ms frame</text><line class="sdg-msg" x1="780" y1="424" x2="84" y2="424" marker-end="url(#ah-turn)"/><text class="sdg-lbl" x="430" y="418" text-anchor="middle">drift-corrected playback · ≈1 s to first word</text></svg><figcaption>Sentence streaming is the latency lever: Elle starts speaking while the rest of the reply is still being generated.</figcaption></figure>
+<h2>Speaking: exact frames, paced delivery</h2>
+<p>Aura streams synthesized audio in chunks that aren't frame-aligned; the cascade re-frames
+them into exact 160-byte (20&nbsp;ms) μ-law frames with a carry buffer, and the bridge releases
+them to Twilio on a drift-corrected 20&nbsp;ms schedule. Pacing matters: dumping audio as fast
+as it synthesizes makes Twilio's jitter buffer choppy, and it makes barge-in worse, audio
+already shipped to Twilio cannot be un-played, so the pacer keeps the un-sent remainder on our
+side where a barge-in can discard it instantly.</p>
+
+<h2>The latency budget</h2>
+<p>Every turn logs its own timing; these lines are the pipeline's vital signs
+(<code>[timing]</code> in the logs):</p>
+<div class="tablewrap"><table>
+<tr><th>Log line</th><th>Meaning</th></tr>
+<tr><td><code>utterance end via speech_final</code></td><td>Endpointing worked (fast path). The fallback firing instead means tuning is needed.</td></tr>
+<tr><td><code>llm first token +N ms</code></td><td>Model latency, including prompt-cache prefill savings.</td></tr>
+<tr><td><code>first sentence ready +N ms</code></td><td>When streaming handed TTS something speakable.</td></tr>
+<tr><td><code>first audio to caller +N ms</code></td><td>The number the caller feels. Production calls run ≈300 ms for the greeting and ≈1 s for LLM turns.</td></tr>
+</table></div>
+
+<h2>Barge-in: three coordinated cancellations</h2>
+<p>When a caller interrupts, three things must stop at once: the LLM stops generating, the TTS
+stops synthesizing, and queued audio stops playing. One integer coordinates all three:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts</div><pre>/** Bumped whenever a turn starts or is cancelled; stale turns bail on mismatch. */
+private turnSeq = 0;
+
+cancelResponse(): void {
+  // Invalidate the running turn. Its captured seq no longer matches turnSeq,
+  // so the LLM loop and TTS pump stop at their next checkpoint. Twilio's own
+  // playback buffer is flushed by the bridge (the `clear` message).
+  this.turnSeq++;
+}</pre></div>
+<p>Every async stage captures <code>seq</code> at turn start and checks it at each checkpoint:
+before speaking a sentence, before emitting a frame, after every await. A barged-in turn
+doesn't error; it just quietly stops being real. The bridge simultaneously sends Twilio a
+<code>clear</code> to flush its playback buffer and truncates the model's context to what the
+caller actually heard.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 820 458" width="820" height="458" role="img" aria-label="Barge-in: three cancellations from one integer"><defs><marker id="ah-barge" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="450"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="450"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="450"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="450"/><line class="sdg-life" x1="730" y1="46" x2="730" y2="450"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Caller</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">Deepgram STT</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">Cascade</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">Bridge</text></g><g class="sdg-actor"><rect x="656" y="8" width="148" height="30" rx="7"/><text x="730" y="27" text-anchor="middle">Twilio</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">talks over Elle</text><g class="sdg-note"><rect x="28" y="106" width="445" height="26" rx="5"/><text x="250" y="123" text-anchor="middle">raw VAD ignored: needs ≥6 chars of recognized, non-echo speech</text></g><line class="sdg-msg" x1="250" y1="148" x2="406" y2="148" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="330" y="142" text-anchor="middle">barge-in trigger</text><line class="sdg-msg" x1="410" y1="182" x2="566" y2="182" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="490" y="176" text-anchor="middle">onSpeechStarted</text><g class="sdg-note"><rect x="348" y="214" width="445" height="26" rx="5"/><text x="570" y="231" text-anchor="middle">greeting gate: ignored until the opening line has fully played</text></g><line class="sdg-msg" x1="570" y1="256" x2="414" y2="256" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="490" y="250" text-anchor="middle">cancelResponse() → turnSeq++</text><path class="sdg-msg" d="M 410 290 h 34 v 18 h -30" fill="none" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="452" y="302" text-anchor="start">LLM loop + TTS pump bail at next checkpoint</text><line class="sdg-msg" x1="570" y1="334" x2="726" y2="334" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="650" y="328" text-anchor="middle">clear → flush queued playback</text><line class="sdg-msg" x1="570" y1="368" x2="414" y2="368" marker-end="url(#ah-barge)"/><text class="sdg-lbl" x="490" y="362" text-anchor="middle">truncate(itemId, playedMs)</text><g class="sdg-note"><rect x="281" y="400" width="418" height="26" rx="5"/><text x="490" y="417" text-anchor="middle">context now matches exactly what the caller actually heard</text></g></svg><figcaption>The interrupted turn doesn't error; it quietly stops being real. The caller's words become the next turn.</figcaption></figure>
+<h2>Echo suppression: don't argue with your own voice</h2>
+<p>On a phone line, Elle's voice can leak back through the caller's handset and transcribe as
+"caller speech", which would both trip barge-in (cutting her off) and produce a bogus
+utterance she then answers. Everything she says is noted in a 30-second rolling window; a
+transcript that is a verbatim chunk of her own recent words is echo:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts · isBotEcho()</div><pre>const norm = DeepgramCascade.normalizeForEcho(candidate);
+// Too short to attribute — leave it alone (it can't barge in anyway, and
+// dropping a real "yes"/"okay" would be worse than a stray echo word).
+if (norm.length &lt; 8 || !norm.includes(" ")) return false;
+...
+if (haystack.includes(norm)) return true;
+// While the greeting could still be playing, also match loosely: line echo
+// arrives garbled (dropped words, misheard names), so an exact-substring
+// test misses it. A transcript made mostly of Elle's own recent words is
+// echo. Greeting-only on purpose — mid-call, callers legitimately repeat
+// her words back ("Tuesday at 2"), and loose matching would eat real turns.</pre></div>
+<p>The loose ≥75% word-overlap match runs <em>only</em> during the greeting window. That
+asymmetry is the tuned-on-real-calls part: greeting echo arrives garbled and needs fuzzy
+matching, but mid-call fuzzy matching would swallow legitimate caller turns that quote Elle's
+own words back at her. Normalization uses Unicode letter classes so Spanish accented words
+survive intact (see <a href="languages.html">bilingual mode</a>).</p>
+
+<h2>The uninterruptible greeting</h2>
+<p>The opening line is deterministic (no LLM round-trip, so no dead air) and it always plays to
+the end. Three independent layers guarantee that, because any one alone proved insufficient on
+real calls:</p>
+<ol>
+  <li><strong>Echo filtering</strong> (above) stops the greeting's own line-echo from
+  registering as caller speech at all.</li>
+  <li><strong>The play-to-end gate.</strong> The bridge counts milliseconds of audio enqueued
+  vs. sent; barge-in stays disabled until every frame of the greeting has been
+  <em>sent</em>, not merely synthesized:
+  <div class="codeblock"><div class="src">src/realtime/twilioBridge.ts · onSpeechStarted</div><pre>if (this.greetingGate) {
+  if (this.greetingEndMs === null || this.totalSentMs &lt; this.greetingEndMs) return;
+  this.greetingGate = false;
+}</pre></div></li>
+  <li><strong>The synthesis lock.</strong> A caller talking over the greeting queues a turn , 
+  and starting a turn bumps <code>turnSeq</code>, which would kill the greeting's own TTS
+  mid-stream. So the turn drain awaits the greeting's synthesis promise before any turn may
+  begin; the caller's words still land, as the first turn after the greeting finishes.</li>
+</ol>
+
+<h2>Turn batching and error recovery</h2>
+<p>A caller talking in bursts (or over the greeting) queues several utterances. They merge into
+one LLM call and one coherent answer, instead of an API call and a spoken reply apiece , 
+fewer tokens and no stacked back-to-back replies. And a failed turn (a provider hiccup
+mid-call) never drops the call: one fast retry absorbs transient errors, and if the turn still
+fails, Elle says so in the caller's language instead of leaving dead air.</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts · drain()</div><pre>// Merge everything queued into ONE turn.
+const parts = this.queue.splice(0);
+if (parts.length &gt; 1) {
+  console.log(`[voice] merged ${parts.length} queued utterances into one turn`);
+}
+await this.runTurn(parts.join(" "));</pre></div>
+
+<h2>Verified offline</h2>
+<p>The whole orchestration runs against fakes, no network, no Deepgram, no LLM, in
+<code>deepgramCascade.verify.ts</code> and <code>bridge.verify.ts</code>: streaming, tool
+round-trips, frame re-framing byte counts, barge-in mid-utterance, and bilingual voice
+selection all assert offline before anything deploys.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

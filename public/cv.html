@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resume</title>
+  <style>
+    :root { --ink:#1a1a1a; --soft:#555; --line:#e2e2e2; --accent:#0e6b4f; --bg:#ffffff; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:#f3f4f6; color:var(--ink);
+      font-family: Georgia, "Times New Roman", serif; line-height:1.55; }
+    .sheet { max-width: 800px; margin: 2rem auto; background:var(--bg); padding: 3rem 3.25rem;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+    header.top { border-bottom: 2px solid var(--ink); padding-bottom: 1rem; margin-bottom: 1.5rem;
+      display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:0.5rem; }
+    h1 { margin:0; font-size: 2rem; letter-spacing:-0.01em; }
+    .sub { color:var(--soft); font-size:0.95rem; }
+    .links { font-family: system-ui, sans-serif; font-size:0.85rem; }
+    .links a { color:var(--accent); text-decoration:none; margin-left:1rem; }
+    h2 { font-family: system-ui, sans-serif; font-size:0.8rem; letter-spacing:0.12em;
+      text-transform:uppercase; color:var(--accent); margin:1.8rem 0 0.6rem; }
+    .entry { margin-bottom: 1rem; }
+    .entry h3 { margin:0 0 0.25rem; font-size:1.05rem; }
+    .entry p { margin:0; color:#333; }
+    .toolbar { max-width:800px; margin:0 auto; padding:0 1rem; display:flex; gap:0.75rem;
+      font-family:system-ui, sans-serif; font-size:0.9rem; }
+    .toolbar a, .toolbar button { color:var(--accent); background:none; border:1px solid var(--accent);
+      border-radius:8px; padding:0.4rem 0.8rem; cursor:pointer; text-decoration:none; font:inherit; }
+    @media print {
+      body { background:#fff; } .sheet { box-shadow:none; margin:0; padding:1.5rem; } .toolbar { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <a href="/interactive.html">Interactive version →</a>
+    <button onclick="window.print()">Print / PDF</button>
+  </div>
+  <article class="sheet">
+    <header class="top">
+      <div>
+        <h1 id="name">Resume</h1>
+        <div class="sub" id="tagline"></div>
+      </div>
+      <div class="links" id="links"></div>
+    </header>
+    <div id="body"></div>
+  </article>
+
+  <script>
+    async function load() {
+      const [profile, resume] = await Promise.all([
+        fetch("/api/profile").then((r) => r.json()).catch(() => ({})),
+        fetch("/api/resume").then((r) => r.json()).catch(() => ({ sections: [] })),
+      ]);
+      if (profile.ownerName && profile.ownerName !== "the owner") {
+        document.getElementById("name").textContent = profile.ownerName;
+        document.title = profile.ownerName + " — Resume";
+      }
+      document.getElementById("tagline").textContent = "Resume";
+      document.getElementById("links").innerHTML =
+        `<a href="/interactive.html">Chat with ${profile.assistantName || "my AI"}</a>`;
+      const body = document.getElementById("body");
+      for (const section of resume.sections || []) {
+        const h2 = document.createElement("h2");
+        h2.textContent = section.title;
+        body.appendChild(h2);
+        for (const item of section.items) {
+          const div = document.createElement("div");
+          div.className = "entry";
+          const h3 = document.createElement("h3");
+          h3.textContent = item.heading;
+          const p = document.createElement("p");
+          p.textContent = item.text;
+          div.appendChild(h3);
+          div.appendChild(p);
+          body.appendChild(div);
+        }
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

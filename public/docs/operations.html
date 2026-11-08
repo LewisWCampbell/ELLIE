@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Operations</h1>
+<p class="lead">One service, one deploy command, a deliberate log vocabulary, live self-checks,
+and offline verification suites. This page is the runbook, plus the full configuration
+reference, variable names and meanings only; values live in Secret Manager and the service
+config, never in documentation.</p>
+
+<h2>Deploy</h2>
+<div class="codeblock"><div class="src">shell</div><pre>npm install                    # once per checkout, before anything below
+./tools/deploy.sh              # typecheck, run every offline suite, then deploy
+./tools/deploy.sh --dry-run    # print the exact command, change nothing</pre></div>
+<p>The deploy configuration lives in the script rather than in a command someone retypes.
+Retyping is how a variable gets dropped, and a dropped variable does not fail loudly: it falls
+back to a default and the service comes up subtly wrong. Two details in there are worth
+knowing. The variable list uses gcloud's <code>^@^</code> custom delimiter because
+<code>LANGUAGES=en,es</code> contains a comma, and under the default comma delimiter that
+would set <code>LANGUAGES=en</code> and quietly turn bilingual mode off. And only secrets that
+actually exist in Secret Manager are attached, so a project missing an optional one deploys
+with a note instead of an error.</p>
+<p><code>--update-env-vars</code> touches only the variables the script lists; everything else
+already on the service survives, which is why one-time settings like the calendar id and the
+project id are deliberately not in it.</p>
+<p>Cloud Build compiles from source and swaps the revision with zero downtime;
+<code>min-instances=1</code> keeps one instance warm so calls never hit a cold start. Secrets
+attach with <code>--update-secrets</code> (Secret Manager references), plain configuration
+with <code>--update-env-vars</code>. The process fails fast at boot if the selected voice
+mode's credentials are missing, so a bad config dies at deploy time, visibly.</p>
+
+<h2>Observe</h2>
+<p>The log vocabulary is a contract, one grep per question:</p>
+<div class="tablewrap"><table>
+<tr><th>Prefix</th><th>Answers</th></tr>
+<tr><td><code>[timing]</code></td><td>Where each turn's milliseconds went: utterance end path, LLM first token, first sentence, first audio to caller.</td></tr>
+<tr><td><code>[voice]</code></td><td>Conversation events: utterances, barge-in triggers, echo suppressions, language switches, merged turns, turn failures.</td></tr>
+<tr><td><code>[call]</code></td><td>Call boundaries with caller number and abuse tier.</td></tr>
+<tr><td><code>[llm]</code></td><td>Token accounting per call: input, cache read, cache write, output, the live proof <a href="cost.html">caching</a> works.</td></tr>
+<tr><td><code>[sms]</code> · <code>[telegram]</code></td><td>Channel traffic, including compliance events (consent confirmations, outreach sends) and gate rejections.</td></tr>
+</table></div>
+
+<h2>Self-checks: the admin surface</h2>
+<p>Two token-guarded owner views close the loop between "configured" and "actually working"
+(<code>src/admin.ts</code>):</p>
+<ul>
+  <li><strong><code>/admin/status</code></strong> probes integrations <em>live</em> rather
+  than echoing config: a real Calendar free/busy call proves calendar access; the intake
+  bot's API is queried and its registered webhook compared against this service's URL, with
+  pending-update counts and the platform's own last-error surfaced; booking, SMS, recording,
+  and the active voice architecture each get a row (with a warning when the pricier demo
+  architecture is live). JSON twin at <code>/admin/status.json</code>.</li>
+  <li><strong><code>/admin/calendar-check</code></strong> runs the booking calendar end to
+  end as the service's own account: reads free/busy, creates a tentative hold, confirms it
+  reads as busy, moves it, deletes it. This is the authoritative answer to "can Elle actually
+  book", because it is the only check that runs as the identity that does the booking. The
+  command-line equivalent runs as whoever is at the terminal.</li>
+    <li><strong><code>/admin/calls</code></strong> lists recent calls with caller number,
+  duration, and expandable full transcripts, how an unknown caller gets identified without
+  log spelunking.</li>
+  <li><strong><code>/admin/gaps</code></strong> is the knowledge-gap report: what people
+  asked, grouped by topic, with the ones the corpus could not answer at the top. It is the
+  only owner view built from anonymous data, so it can be read without reading anyone's
+  conversation. <code>?days=30</code> widens the window, <code>/admin/gaps.json</code> is the
+  JSON twin, and <code>POST /admin/send-digest</code> sends the digest immediately instead of
+  waiting for the weekly one.</li>
+</ul>
+
+<h2 id="scripts">The operator scripts</h2>
+<p>Each takes no arguments and looks up what it needs, because a command with a
+<code>&lt;placeholder&gt;</code> in it is a command that eventually gets run
+verbatim. All three accept <code>SERVICE</code> and <code>REGION</code> as
+environment overrides when the service is not the default
+<code>letstalk-elle</code> in <code>us-central1</code>.</p>
+<div class="tbl"><table>
+<tr><th>Command</th><th>What it answers</th></tr>
+<tr><td><code>./tools/deploy.sh</code></td><td>Typecheck, run every offline suite, attach the secrets that exist, deploy. Refuses to deploy if anything fails. <code>--dry-run</code> prints the command; <code>--skip-checks</code> skips the suites.</td></tr>
+<tr><td><code>npm run check:calendar</code></td><td>Asks the deployed service to check its own booking calendar, as the account it books with: read, write, confirm busy, move, delete. The authoritative check.</td></tr>
+<tr><td><code>npm run check:calls</code></td><td>Who has called. Twilio's permanent record first, then what this instance remembers, with the archive's live state read from the service rather than guessed from an environment variable. <code>DAYS=30</code> widens the window from the default seven.</td></tr>
+<tr><td><code>npm run check:docs</code></td><td>Whether the documentation still names the same settings and tools the code has. Mechanical claims only; the prose still needs a reader.</td></tr>
+<tr><td><code>./tools/secrets-migrate.sh</code></td><td>Moves a value that is a literal in the service spec into Secret Manager, piped so it is never printed. Prints a plan; changes nothing without <code>--apply</code>.</td></tr>
+<tr><td><code>./tools/enable-archive.sh</code></td><td>Creates the private bucket for call history, grants the runtime account, and points the service at it. Plan by default, <code>--apply</code> to act, <code>RETAIN_DAYS=365</code> to expire old calls.</td></tr>
+</table></div>
+
+<h2>Verify offline</h2>
+<div class="codeblock"><div class="src">shell</div><pre>npm run typecheck
+npm run verify:bridge      # barge-in flush/truncate/cancel, audio both ways
+npm run verify:factory     # runtime architecture switch + demo deadline
+npm run verify:audio       # phone audio conversion across chunk boundaries
+npm run verify:gemini      # Vertex duplex adapter, against a fake session
+npm run verify:intake      # the owner's call report, against a seeded DB</pre></div>
+<p>Those fake their dependencies, which is the point: they prove the orchestration without a
+phone, a key, or a network. What they cannot prove is that <em>this deployment</em> can reach
+the things it needs. Two live checks cover that gap:</p>
+<div class="codeblock"><div class="src">shell</div><pre>./tools/smoke-calendar.sh      # real calendar: read, create, busy, move, delete
+./tools/smoke-gemini-live.sh   # real Vertex duplex session, writes a WAV
+npm run verify:cascade     # streaming, tool loop, re-framing, bilingual voices
+npm run verify:knowledge   # chunking + BM25 retrieval
+npm run verify:booking     # tentative holds, busy slots, lead capture
+npm run verify:calendar    # Calendar REST client, incl. the guest fallback
+npm run verify:policy      # abuse tier escalation
+npm run verify:recording   # WAV framing + sidecar</pre></div>
+<p>Every suite fakes its network dependencies (Twilio socket, speech streams, the LLM) and
+exercises the real orchestration logic. The discipline: anything tricky enough to have broken
+once gets an offline assertion so it can't silently break twice.</p>
+
+<h2>Configuration reference</h2>
+<p>Everything tunable is an environment variable, documented in <code>.env.example</code>.
+Names and purposes only, secrets are set via Secret Manager, never written down:</p>
+
+<h3>Identity and transport</h3>
+<div class="tablewrap"><table>
+<tr><th>Variable</th><th>Purpose</th></tr>
+<tr><td><code>PUBLIC_URL</code></td><td>This service's own base URL (webhooks, media stream, signature validation).</td></tr>
+<tr><td><code>SITE_URL</code> · <code>ASK_PATH</code></td><td>The human-facing site and the single page carrying both chat and call pairing. Everything visitor-facing points here; legacy paths on the service origin redirect to it.</td></tr>
+<tr><td><code>VOICE_MODE</code></td><td><code>realtime</code> (barge-in pipeline) or <code>cascaded</code> (Gather/Say fallback).</td></tr>
+<tr><td><code>REALTIME_PROVIDER</code></td><td>Default voice architecture: <code>deepgram</code> (production cascade), <code>gemini</code> (fused, on Vertex AI, no API key), or <code>openai</code> (fused, separate vendor). Runtime-overridable by the owner; a fused override reverts on its own after its deadline.</td></tr>
+<tr><td><code>PROFILE_NAME</code> · <code>ASSISTANT_NAME</code></td><td>Who Elle represents, and what she's called.</td></tr>
+<tr><td><code>CORS_ORIGIN</code></td><td>Origins allowed to call the public API.</td></tr>
+</table></div>
+
+<h3>Speech and language</h3>
+<div class="tablewrap"><table>
+<tr><th>Variable</th><th>Purpose</th></tr>
+<tr><td><code>DEEPGRAM_API_KEY</code></td><td><span class="pill">SECRET</span> One key covers STT and TTS.</td></tr>
+<tr><td><code>DEEPGRAM_STT_MODEL</code> · <code>DEEPGRAM_STT_MULTI_MODEL</code></td><td>English-only vs. code-switching STT models.</td></tr>
+<tr><td><code>DEEPGRAM_TTS_MODEL</code> · <code>DEEPGRAM_TTS_MODEL_ES</code></td><td>Elle's English and Spanish voices.</td></tr>
+<tr><td><code>LANGUAGES</code></td><td>Conversation languages; more than one enables <a href="languages.html">bilingual mode</a>.</td></tr>
+<tr><td><code>DEEPGRAM_ENDPOINTING_MS</code></td><td>Trailing silence before a caller's turn is considered finished.</td></tr>
+<tr><td><code>DEEPGRAM_BARGE_IN_MIN_CHARS</code> · <code>DEEPGRAM_BARGE_IN_GRACE_MS</code></td><td>How much recognized speech interrupts, and the grace window after Elle starts talking.</td></tr>
+</table></div>
+
+<h3>Reasoning</h3>
+<div class="tablewrap"><table>
+<tr><th>Variable</th><th>Purpose</th></tr>
+<tr><td><code>GEMINI_LIVE_MODEL</code> · <code>GEMINI_LIVE_LOCATION</code> · <code>GEMINI_LIVE_VOICE</code></td><td>The Vertex duplex model, its region (the Live API is not offered everywhere, so it is set separately from <code>VERTEX_REGION</code>), and its voice. No credential: auth is ADC. Confirm the model is enabled for the project with <code>tools/smoke-gemini-live.sh</code> before relying on it.</td></tr>
+<tr><td><code>LLM_PROVIDER</code></td><td><code>anthropic</code> (default), <code>vertex</code> (same models inside a GCP BAA), or <code>openai</code>-compatible endpoints.</td></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td><span class="pill">SECRET</span> When using the Anthropic API directly.</td></tr>
+<tr><td><code>CLAUDE_MODEL</code> · <code>VERTEX_*</code> · <code>OPENAI_*</code></td><td>Model and endpoint selection per provider.</td></tr>
+</table></div>
+
+<h3>Telephony, booking, and channels</h3>
+<div class="tablewrap"><table>
+<tr><th>Variable</th><th>Purpose</th></tr>
+<tr><td><code>TWILIO_AUTH_TOKEN</code></td><td><span class="pill">SECRET</span> Webhook signature validation, and the key for media-stream tokens.</td></tr>
+<tr><td><code>TWILIO_ACCOUNT_SID</code> · <code>TWILIO_FROM_NUMBER</code></td><td>Outbound SMS (consent confirmations, outreach).</td></tr>
+<tr><td><code>BOOKING_CALENDAR_ID</code> · <code>BOOKING_TIMEZONE</code> · <code>BOOKING_DURATION_MINUTES</code></td><td>Where tentative holds land and how meetings are shaped.</td></tr>
+<tr><td><code>TELEGRAM_BOT_TOKEN</code> · <code>TELEGRAM_WEBHOOK_SECRET</code></td><td><span class="pill">SECRET</span> The owner intake bot and its webhook gate.</td></tr>
+<tr><td><code>TELEGRAM_OWNER_ID</code></td><td>The single account the intake channel obeys.</td></tr>
+<tr><td><code>ADMIN_TOKEN</code></td><td><span class="pill">SECRET</span> Enables the admin views; absent = they 404.</td></tr>
+<tr><td><code>ABUSE_*</code></td><td>Repeat-caller thresholds, window, and the limited-tier duration cap.</td></tr>
+<tr><td><code>RECORDING_*</code></td><td>Off-by-default call recording: enable flag, GCS bucket, prefix.</td></tr>
+<tr><td><code>QUERY_LOG</code></td><td>Set to <code>0</code> to stop logging questions for the gap report; default on.</td></tr>
+<tr><td><code>GAP_MIN_SCORE</code> · <code>GAP_RETENTION_DAYS</code> · <code>GAP_DIGEST_DAYS</code></td><td>What counts as unanswered, how long questions are kept, and how often the digest goes out (<code>0</code> = never).</td></tr>
+</table></div>
+
+<h2>Known operational habits</h2>
+<ul>
+  <li><strong>SQLite rides the instance.</strong> Facts and transcripts persist across calls
+  but not across revision replacements; the documented upgrade is a managed database when
+  that trade stops being acceptable.</li>
+  <li><strong>Webhook registration is stateful.</strong> The intake bot's webhook and secret
+  are registered against the platform once per secret rotation; <code>/admin/status</code>
+  is the fastest way to see whether registration and the deployed config agree.</li>
+  <li><strong>Everything optional degrades.</strong> No calendar → bookings become leads. No
+  outbound SMS credentials → consent texts are skipped and logged. No bot token → the intake
+  route stays dark. The phone always answers.</li>
+</ul>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

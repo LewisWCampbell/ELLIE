@@ -1,0 +1,23 @@
+# Smoke test: the real 7B model, a handful of episodes, no audio (zeros), two
+# steps. Proves the model loads, the vocab resize works, and one
+# forward/backward fits on the GPU, before any long job is queued.
+extends: gcp.yaml
+
+run_dir: ${ELLE_WORK}/runs/smoke
+
+data:
+  prepared_dir: ${ELLE_WORK}/runs/smoke/prepared
+  plain_prepared_dir: null            # the smoke test doesn't need the plain set
+
+prepare:
+  audio:
+    mode: zero
+
+train:
+  max_steps: 2
+  batch_size: 1
+  grad_accum: 1
+
+eval:
+  every_steps: 1000000
+  ckpt_every_steps: 2

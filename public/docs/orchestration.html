@@ -1,0 +1,471 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap">
+<title>The Layer Nobody Draws</title>
+<style>
+  :root{
+    --paper:#e7e6df; --raise:#efeee8; --ink:#17171b; --muted:#6f6e78;
+    --rule:rgba(23,23,27,.14); --rule2:rgba(23,23,27,.34); --accent:#1e37e6;
+    --s0:#1c7c4a; --s1:#8a5cc4; --s2:#9a6f10; --s3:#1e37e6; --s4:#b8462a;
+    --good:#1c7c4a; --warn:#9a6f10; --bad:#b8462a;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --serif:"Charter","Source Serif 4","Iowan Old Style",Georgia,serif;
+    --measure:34rem;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0d0d12; --raise:#15151c; --ink:#ecebe4; --muted:#8c8b95;
+      --rule:rgba(236,235,228,.14); --rule2:rgba(236,235,228,.3); --accent:#6d84ff;
+      --s0:#3fa96e; --s1:#9a72cf; --s2:#b08a22; --s3:#6d84ff; --s4:#e06b48;
+      --good:#3fa96e; --warn:#b08a22; --bad:#e06b48;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d0d12; --raise:#15151c; --ink:#ecebe4; --muted:#8c8b95;
+    --rule:rgba(236,235,228,.14); --rule2:rgba(236,235,228,.3); --accent:#6d84ff;
+    --s0:#3fa96e; --s1:#9a72cf; --s2:#b08a22; --s3:#6d84ff; --s4:#e06b48;
+    --good:#3fa96e; --warn:#b08a22; --bad:#e06b48;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:var(--serif);font-size:17px;line-height:1.62;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:60rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;
+        display:flex;flex-direction:column;gap:3.25rem}
+  .col{max-width:var(--measure)}
+  p{margin:0 0 1rem}
+  p:last-child{margin-bottom:0}
+  a{color:var(--accent)}
+  a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+  .masthead{border-bottom:1.5px solid var(--rule2);padding-bottom:1.1rem;
+            display:flex;flex-direction:column;gap:1.4rem}
+  .slug{font-family:var(--mono);font-size:.64rem;letter-spacing:.22em;
+        text-transform:uppercase;color:var(--muted);
+        display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+  h1{font-size:clamp(2.1rem,5.2vw,3.1rem);line-height:1.04;letter-spacing:-.025em;
+     margin:0;font-weight:700;text-wrap:balance;max-width:20ch}
+  .standfirst{font-size:1.16rem;color:var(--muted);margin:0;max-width:44ch}
+
+  section{display:flex;flex-direction:column;gap:1.25rem}
+  h2{font-family:var(--mono);font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;
+     font-weight:600;margin:0;padding-bottom:.55rem;border-bottom:1.5px solid var(--rule2);
+     display:flex;gap:.9rem;align-items:baseline}
+  h2 .no{color:var(--accent);font-variant-numeric:tabular-nums}
+  h3{font-size:1.06rem;margin:.4rem 0 0;letter-spacing:-.01em}
+
+  .lede{font-size:1.1rem}
+  .findings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1.1rem;counter-reset:f}
+  .findings li{counter-increment:f;display:grid;grid-template-columns:1.9rem 1fr;gap:.9rem;
+               max-width:calc(var(--measure) + 2.8rem)}
+  .findings li p{margin:0}
+  .findings li::before{content:counter(f,decimal-leading-zero);font-family:var(--mono);
+                       font-size:.72rem;color:var(--accent);letter-spacing:.06em;padding-top:.42rem}
+
+  .figure{display:flex;flex-direction:column;gap:.7rem}
+  .figure .cap{font-family:var(--mono);font-size:.7rem;color:var(--muted);letter-spacing:.04em;
+               max-width:70ch;line-height:1.6}
+  .scroll{overflow-x:auto;padding-bottom:.3rem}
+  .chart{width:100%;min-width:34rem;height:auto;display:block}
+  .grid{stroke:var(--rule);stroke-width:1}
+  .tick,.axis{font-family:var(--mono);font-size:10px;fill:var(--muted)}
+  .rowlab{font-family:var(--serif);font-size:13.5px;fill:var(--ink)}
+  .total{font-family:var(--mono);font-size:11.5px;font-weight:600;fill:var(--ink);
+         font-variant-numeric:tabular-nums}
+  .seg{transition:opacity .12s}
+  .chart:hover .seg{opacity:.45}
+  .chart .seg:hover{opacity:1}
+  .s0{fill:var(--s0)}.s1{fill:var(--s1)}.s2{fill:var(--s2)}.s3{fill:var(--s3)}.s4{fill:var(--s4)}
+  .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .dot{stroke:var(--paper);stroke-width:2}
+  .leader{fill:none;stroke-width:1}
+  .endlab{font-family:var(--mono);font-size:10.5px}
+  .f-base{--c:var(--muted)}
+  .f-man{--c:var(--s3)}
+  .f-host{--c:var(--s4)}
+  .line{stroke:var(--c)}
+  .line.alt{stroke-dasharray:5 4}
+  .dot{fill:var(--c)}
+  .leader{stroke:var(--c)}
+  .endlab{fill:var(--c)}
+
+
+  .legend{display:flex;flex-wrap:wrap;gap:.4rem 1.3rem;font-family:var(--mono);
+          font-size:.68rem;letter-spacing:.04em;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:.42rem}
+  .key{width:10px;height:10px;border-radius:2px;flex:none}
+  .k0{background:var(--s0)}.k1{background:var(--s1)}.k2{background:var(--s2)}
+  .k3{background:var(--s3)}.k4{background:var(--s4)}
+
+  table{border-collapse:collapse;width:100%;min-width:36rem;
+        font-size:.92rem;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:.62rem .9rem .62rem 0;border-bottom:1px solid var(--rule);
+        vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;
+           color:var(--muted);border-bottom:1.5px solid var(--rule2);font-weight:500;
+           padding-bottom:.5rem;white-space:nowrap}
+  td.n,th.n{text-align:right;font-family:var(--mono);font-size:.84rem;padding-right:0}
+  tbody tr:last-child td{border-bottom:none}
+  tr.rule-top td{border-top:1.5px solid var(--rule2)}
+  .win{color:var(--good);font-weight:600}
+  .lose{color:var(--bad)}
+  .name{font-weight:600;white-space:nowrap}
+  .sub{display:block;font-family:var(--mono);font-size:.66rem;color:var(--muted);
+       font-weight:400;letter-spacing:.02em;white-space:normal;max-width:22ch}
+
+  sup a{font-family:var(--mono);font-size:.62rem;text-decoration:none;padding:0 .06em;
+        font-variant-numeric:tabular-nums}
+  sup a:hover{text-decoration:underline}
+
+  .callout{border-left:2.5px solid var(--accent);padding:.15rem 0 .15rem 1.15rem;
+           max-width:calc(var(--measure) + 1.15rem)}
+  .callout .lab{font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;
+                text-transform:uppercase;color:var(--accent);display:block;margin-bottom:.35rem}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:1px;
+         background:var(--rule);border:1px solid var(--rule)}
+  .stat{background:var(--paper);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.2rem}
+  .stat .v{font-family:var(--mono);font-size:1.5rem;font-weight:600;letter-spacing:-.03em;
+           font-variant-numeric:tabular-nums;line-height:1.1}
+  .stat .l{font-family:var(--mono);font-size:.62rem;letter-spacing:.13em;text-transform:uppercase;
+           color:var(--muted)}
+  .stat .n{font-size:.84rem;color:var(--muted);line-height:1.45;margin-top:.2rem}
+
+  code{font-family:var(--mono);font-size:.86em;background:var(--raise);
+       padding:.08em .34em;border-radius:2px}
+  pre{margin:0;background:var(--raise);border:1px solid var(--rule);border-radius:3px;
+      padding:1rem 1.1rem;overflow-x:auto;font-family:var(--mono);font-size:.78rem;line-height:1.65}
+
+  .notes{font-size:.86rem;line-height:1.6}
+  .notes ol{margin:0;padding-left:1.6rem;display:flex;flex-direction:column;gap:.55rem}
+  .notes li{padding-left:.25rem}
+  .notes li:target{background:var(--raise);outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}
+  .notes .m{font-family:var(--mono);font-size:.82em}
+
+  footer{border-top:1.5px solid var(--rule2);padding-top:1rem;font-family:var(--mono);
+         font-size:.66rem;letter-spacing:.06em;color:var(--muted);
+         display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+  @media (max-width:640px){
+    body{font-size:16px}
+    .findings li{grid-template-columns:1.5rem 1fr;gap:.6rem}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+<style>
+  .barlab{font-family:var(--serif);font-size:12.5px;fill:#fff;font-weight:600}
+  .ms{font-family:var(--mono);font-size:10px;fill:var(--muted);font-variant-numeric:tabular-nums}
+  .endcap{font-family:var(--mono);font-size:10px;fill:var(--ink);letter-spacing:.06em;text-transform:uppercase}
+  .ann{font-family:var(--mono);font-size:10px;fill:var(--muted)}
+  .lead{stroke:var(--rule2);stroke-width:1;stroke-dasharray:2 3}
+  .dotm{fill:var(--rule2)}
+  .marker{stroke:var(--accent);stroke-width:1.5}
+  .findings li p{margin:0}
+  pre{max-width:calc(var(--measure) + 8rem)}
+  .m{font-family:var(--mono);font-size:.86em}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="slug">
+    <span>System note</span>
+    <span>LetsTalk / Elle &middot; the interaction layer</span>
+  </div>
+  <h1>The Layer Nobody Draws</h1>
+  <p class="standfirst">Elle's orchestration: what decides when to talk, when to stop, and what
+  to throw away. Roughly a fifth of the codebase, and none of it appears on the
+  whiteboard diagram.</p>
+</header>
+
+<section>
+  <h2><span class="no">01</span> What orchestration is doing here</h2>
+  <div class="col">
+    <p class="lede">Draw a voice agent and you get three boxes: speech to text, a language model,
+    text to speech. Ears, brain, mouth. Nothing in those three boxes decides <em>when</em> to
+    speak.</p>
+    <p>That decision is a fourth thing, and it is not a box. It is a set of timers, gates and
+    cancellation tokens sitting between the three, and if you do not design one you get one
+    anyway, assembled one bug fix at a time. This document is what Elle's looks like after that
+    process ran to completion.</p>
+    <p>Two files hold almost all of it. <span class="m">twilioBridge.ts</span> owns the phone
+    call: the socket, the audio clock, the barge-in decision, capacity, recording, and the
+    session paired to a browser. <span class="m">deepgramCascade.ts</span> owns the conversation:
+    turn assembly, the tool loop, sentence-level speaking, and echo suppression. Between them,
+    about 1,150 lines, against roughly 7,900 in the whole service.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">02</span> One turn, end to end</h2>
+  <div class="figure">
+    <div class="scroll"><svg viewBox="0 0 760 300" role="img" aria-labelledby="tt" class="chart">
+<title id="tt">Timeline of one conversational turn, from the caller falling silent to the first word of the reply</title>
+<line class="grid" x1="26.0" y1="82" x2="26.0" y2="178"/>
+<text class="tick" x="26.0" y="72" text-anchor="middle">0 ms</text>
+<line class="grid" x1="130.1" y1="82" x2="130.1" y2="178"/>
+<text class="tick" x="130.1" y="72" text-anchor="middle">250 ms</text>
+<line class="grid" x1="234.2" y1="82" x2="234.2" y2="178"/>
+<text class="tick" x="234.2" y="72" text-anchor="middle">500 ms</text>
+<line class="grid" x1="338.4" y1="82" x2="338.4" y2="178"/>
+<text class="tick" x="338.4" y="72" text-anchor="middle">750 ms</text>
+<line class="grid" x1="442.5" y1="82" x2="442.5" y2="178"/>
+<text class="tick" x="442.5" y="72" text-anchor="middle">1000 ms</text>
+<line class="grid" x1="546.6" y1="82" x2="546.6" y2="178"/>
+<text class="tick" x="546.6" y="72" text-anchor="middle">1250 ms</text>
+<line class="grid" x1="650.7" y1="82" x2="650.7" y2="178"/>
+<text class="tick" x="650.7" y="72" text-anchor="middle">1500 ms</text>
+<rect class="seg s2" x="26.0" y="98" width="414.5" height="40" rx="3"><title>endpointing silence: 1000 ms</title></rect>
+<text class="barlab" x="234.2" y="122.0" text-anchor="middle">endpointing silence</text>
+<text class="ms" x="234.2" y="154.0" text-anchor="middle">1000 ms</text>
+<rect class="seg s3" x="442.5" y="98" width="164.6" height="40" rx="3"><title>model: 400 ms</title></rect>
+<text class="barlab" x="525.8" y="122.0" text-anchor="middle">model</text>
+<text class="ms" x="525.8" y="154.0" text-anchor="middle">400 ms</text>
+<rect class="seg s4" x="609.1" y="98" width="60.5" height="40" rx="3"><title>speech: 150 ms</title></rect>
+<text class="barlab" x="640.3" y="122.0" text-anchor="middle">speech</text>
+<text class="ms" x="640.3" y="154.0" text-anchor="middle">150 ms</text>
+<text class="endcap" x="26" y="88">caller stops talking</text>
+<text class="endcap" x="671.5" y="88" text-anchor="end">Elle speaks</text>
+<line class="marker" x1="671.5" y1="92" x2="671.5" y2="144"/>
+<line class="lead" x1="234.2" y1="160" x2="234.2" y2="181"/>
+<circle class="dotm" cx="234.2" cy="160" r="2.5"/>
+<text class="ann" x="234.2" y="190" text-anchor="start">utterances that arrive here are merged into one turn</text>
+<line class="lead" x1="442.5" y1="160" x2="442.5" y2="203"/>
+<circle class="dotm" cx="442.5" cy="160" r="2.5"/>
+<text class="ann" x="442.5" y="212" text-anchor="middle">TTS socket is already warming, so this hop overlaps the model</text>
+<line class="lead" x1="609.1" y1="160" x2="609.1" y2="225"/>
+<circle class="dotm" cx="609.1" cy="160" r="2.5"/>
+<text class="ann" x="609.1" y="234" text-anchor="end">audio is paced out at one 20 ms frame per 20 ms</text>
+</svg></div>
+    <p class="cap">The measured path from the caller falling silent to hearing the first word
+    back. The endpointing wait is the largest single component and none of it is compute: it is
+    the system deciding the caller is finished.</p>
+  </div>
+  <div class="col">
+    <p>The order matters more than the totals. Speech recognition runs continuously, so
+    transcription is not a step in this path at all; it has already happened by the time the
+    caller stops. What remains is a timer, one model call, and one speech call.</p>
+    <p>Three of the optimisations in the diagram are worth naming, because each is a piece of
+    orchestration rather than a faster vendor.</p>
+    <p><strong>The reply is spoken sentence by sentence.</strong> The model streams, and a
+    regular expression watches the stream for a completed sentence: at least fifteen characters
+    ending in terminal punctuation followed by whitespace. The moment one exists it goes to
+    speech synthesis while the rest of the reply is still being generated. Waiting for the whole
+    reply would add most of a second before anything was audible.</p>
+    <p><strong>The speech socket is warmed while the model thinks.</strong> Opening a websocket
+    to the speech vendor costs real milliseconds, and those milliseconds are free if they overlap
+    the model call. So the turn opens the socket for the language the caller is currently
+    speaking before it has anything to say.</p>
+    <p><strong>Utterances that arrive together become one turn.</strong> A caller who talks in
+    bursts would otherwise produce a model call and a spoken answer per burst, and hear
+    back-to-back replies to what was really one thought. Everything queued is merged into a
+    single turn, logged when it happens.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">03</span> Every intervention, and what it costs</h2>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Mechanism</th><th class="n">Setting</th><th>Exists because</th><th>The tradeoff</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Endpointing timer<span class="sub">deepgram, per stream</span></td>
+            <td class="n">1000 ms</td>
+            <td>Nothing else decides the caller has finished. The timer counts silence.</td>
+            <td>Lower and she cuts people off mid-thought; higher and she feels slow on every
+            turn. There is no correct value, because the timer cannot understand a word that was
+            said.</td>
+          </tr>
+          <tr>
+            <td class="name">Barge-in grace<span class="sub">bargeInGraceMs</span></td>
+            <td class="n">1200 ms</td>
+            <td>Line noise and the echo of Elle's own first syllable would otherwise cut her off
+            the instant she starts.</td>
+            <td>For 1.2 seconds after she begins a reply, a genuine interruption is ignored.</td>
+          </tr>
+          <tr>
+            <td class="name">Greeting gate<span class="sub">greetingGate</span></td>
+            <td class="n">until aired</td>
+            <td>The opening line must survive its own echo; it is the one moment Elle's voice is
+            loudest into an un-adjusted line.</td>
+            <td>The greeting cannot be interrupted at all, which makes its length dead air the
+            caller has to sit through. That is why it is 17.6 seconds and not 31.</td>
+          </tr>
+          <tr>
+            <td class="name">Echo suppression<span class="sub">30 s rolling window</span></td>
+            <td class="n">8 chars</td>
+            <td>Elle's voice leaks back through the caller's handset and transcribes as caller
+            speech, which both trips barge-in and lands as an utterance she then answers.</td>
+            <td>Anything under eight characters is left alone: dropping a real "yes" is worse
+            than passing a stray echoed word.</td>
+          </tr>
+          <tr>
+            <td class="name">Speaking gate<span class="sub">audioQueue check</span></td>
+            <td class="n">talking only</td>
+            <td>Interrupting while she is <em>thinking</em> would kill the reply mid-generation
+            and leave the caller in silence asking "are you there?".</td>
+            <td>Caller speech during generation does not interrupt; it queues as the next turn.</td>
+          </tr>
+          <tr>
+            <td class="name">Cancellation token<span class="sub">turnSeq</span></td>
+            <td class="n">monotonic</td>
+            <td>A barged-in turn has work in flight in three places at once: the model stream,
+            the speech stream, and the audio queue.</td>
+            <td>Every one of them checks the sequence number before doing anything, so a stale
+            turn cannot speak over the new one.</td>
+          </tr>
+          <tr>
+            <td class="name">Audio metronome<span class="sub">10 ms tick, 20 ms frames</span></td>
+            <td class="n">drift-corrected</td>
+            <td>Speech synthesis arrives in fast bursts. Forwarded straight through, playback
+            stutters.</td>
+            <td>The first frame goes immediately for latency; the rest are paced against
+            wall-clock, so timer jitter cannot accumulate into a slurred tail.</td>
+          </tr>
+          <tr>
+            <td class="name">Silence hangup<span class="sub">silentHangupSeconds</span></td>
+            <td class="n">75 s</td>
+            <td>A call where nobody ever speaks is a pocket dial or a dead line, billing by the
+            minute.</td>
+            <td>Generous enough to cover the greeting plus a long pause.</td>
+          </tr>
+          <tr>
+            <td class="name">Call cap<span class="sub">maxCallSeconds</span></td>
+            <td class="n">600 s</td>
+            <td>Cost control against a caller, or a dialer, who never hangs up.</td>
+            <td>A genuinely long conversation is cut at ten minutes.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Every row is a hand-tuned constant standing in for a judgment a person makes
+    without thinking. That is the honest summary of what an interaction layer is when it is
+    built out of orchestration rather than learned.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">04</span> Barge-in, in three steps</h2>
+  <div class="col">
+    <p>When the caller talks over Elle and the gates above all pass, three things happen in
+    order, and the order is the whole trick.</p>
+    <ol class="findings">
+      <li><p><strong>Flush what is already gone.</strong> Audio has been handed to Twilio and is
+      sitting in <em>their</em> buffer, ahead of the caller's ear. A <span class="m">clear</span>
+      frame drops it there, and the local queue is emptied. Without this she keeps talking for a
+      second after being interrupted, which is the single most unnatural thing a voice agent
+      does.</p></li>
+      <li><p><strong>Truncate the memory to what was actually heard.</strong> The model believes
+      it said the whole reply. It said as much as was played. The bridge counts milliseconds
+      actually sent and truncates the conversation history to match, so Elle's next turn follows
+      from what the caller heard rather than from what she intended to say.</p></li>
+      <li><p><strong>Cancel the generation.</strong> The sequence number increments, which every
+      in-flight stream is watching, so the model call, the speech synthesis, and the audio pacer
+      all stop on their next check.</p></li>
+    </ol>
+    <p>Step two is the one that is easy to skip and expensive to skip. Without it the transcript
+    and the model's context drift apart from the conversation that actually took place, and the
+    error compounds: every later turn reasons from a version of the call the caller never
+    experienced.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">05</span> The seam</h2>
+  <div class="col">
+    <p>All of the above describes the cascade, which is what answers the phone today. It is not
+    welded in. The bridge talks to an interface, not to a vendor:</p>
+  </div>
+  <pre>interface RealtimeModel {
+  currentItemId: string | null;   // what is being spoken, for truncation
+  appendAudio(base64ulaw)         // caller audio in
+  sendText?(text)                 // typed on the paired browser, answered aloud
+  cancelResponse()                // barge-in
+  truncate(itemId, audioEndMs)    // memory follows what was heard
+  sendFunctionResult(callId, out) // the tool loop
+  greet?(text)                    // speak before the caller does
+  close()
+}</pre>
+  <div class="col">
+    <p>Three implementations sit behind it: the Deepgram cascade, OpenAI's realtime API, and
+    Gemini Live on Vertex. The optional members are the interesting part of the design. A fused
+    speech-to-speech model does its own turn-taking, so it implements
+    <span class="m">cancelResponse</span> and has nothing meaningful to do in
+    <span class="m">truncate</span> — there is no text history to trim, because the model's memory
+    <em>is</em> the audio. The cascade is the opposite: its truncate is load-bearing and its
+    "memory" is entirely text.</p>
+    <p>Which one runs is decided per call, read from the settings table rather than a cached
+    value, so overlapping instances during a deploy cannot disagree. An override carries an
+    expiry, so switching architectures for a demonstration cannot silently become permanent.</p>
+    <p>That seam is the point of the whole exercise. Everything in section 03 is compensation for
+    a layer the architecture leaves out, and the version of this that is actually good will be a
+    model that has it built in. When that swap happens it should be one line, not a rewrite.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">06</span> What it does when things break</h2>
+  <div class="figure">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Failure</th><th>What happens</th><th>Why that way</th></tr></thead>
+        <tbody>
+          <tr><td class="name">A turn throws</td>
+            <td>Elle apologises out loud and the call continues</td>
+            <td>Silence makes callers ask "are you there?" and then hang up. A spoken error keeps
+            the call alive.</td></tr>
+          <tr><td class="name">Availability check errors</td>
+            <td>The booking proceeds anyway</td>
+            <td>Deliberately fails open. Losing a caller ready to commit is worse than a hold the
+            owner may have to move, and every booking is confirmed by hand.</td></tr>
+          <tr><td class="name">Two callers take one slot</td>
+            <td>The second is told and offered another time</td>
+            <td>A unique index in the database settles it, because the two callers may be on
+            different instances and nothing in either process can.</td></tr>
+          <tr><td class="name">Calendar unreadable</td>
+            <td>Raises</td>
+            <td>Free/busy answers 200 with a per-calendar error and an empty busy list, which
+            reads as "free". An unreadable calendar is not an empty one.</td></tr>
+          <tr><td class="name">Archive upload fails</td>
+            <td>Retried, then logged loudly</td>
+            <td>Archiving must never be able to break a live call, so every failure is caught;
+            giving up quietly is the thing the archive exists to prevent.</td></tr>
+          <tr><td class="name">At capacity</td>
+            <td>The caller is told and asked to text</td>
+            <td>They used to hear silence and conclude the number was broken.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">07</span> The ceiling</h2>
+  <div class="col">
+    <p>Everything above is well-built and none of it fixes the shape of the pipeline. Three
+    things are not reachable from here at any level of effort:</p>
+    <p><strong>Prosody dies at the transcript.</strong> Speech to text hands over the words and
+    drops the hesitation, the sarcasm, the rising panic. Elle answers the sentence. She has no
+    access to the delivery, and she never will, because that information was discarded two layers
+    upstream.</p>
+    <p><strong>Overlap has no representation.</strong> The native unit of this system is a
+    finished transcript. Two people speaking at once — the most ordinary thing in a real
+    conversation — is architecturally undefined. She cannot murmur agreement while you are still
+    talking, because the pipeline is strictly one turn at a time.</p>
+    <p><strong>A timer cannot understand language.</strong> A person waits differently after "so
+    anyway" than after "what do you think?". The endpointing timer hears the same silence in
+    both.</p>
+    <p>Which is the argument for the seam in section 05, and for the fused models sitting behind
+    it. Three layers buys a very good exchange. The layer that turns an exchange into a
+    conversation is the one that has to be learned rather than tuned.</p>
+  </div>
+</section>
+
+<footer>
+  <span>Generated from the source at src/realtime/</span>
+  <span>Constants current as deployed</span>
+</footer>
+
+</div>

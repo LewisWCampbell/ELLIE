@@ -1,0 +1,68 @@
+{
+  "name": "letstalk",
+  "version": "1.0.0",
+  "description": "Elle: an AI phone, SMS and web assistant that answers questions about Lewis's work and books intro calls",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "verify:bridge": "tsx src/realtime/bridge.verify.ts",
+    "verify:knowledge": "tsx src/knowledge.verify.ts",
+    "verify:vertex": "tsx src/llm/vertex.verify.ts",
+    "verify:cascade": "tsx src/realtime/deepgramCascade.verify.ts",
+    "verify:policy": "tsx src/callerPolicy.verify.ts",
+    "verify:factory": "tsx src/realtime/factory.verify.ts",
+    "verify:intake": "tsx src/intake.verify.ts",
+    "deploy": "./tools/deploy.sh",
+    "check:calendar": "./tools/check-calendar.sh",
+    "check:calls": "./tools/check-calls.sh",
+    "smoke:calendar": "tsx tools/smoke-calendar.ts",
+    "smoke:gemini": "tsx tools/smoke-gemini-live.ts",
+    "docs:pdf": "node tools/build-docs-pdf.mjs",
+    "verify:audio": "tsx src/realtime/audio/g711.verify.ts",
+    "verify:gemini": "tsx src/realtime/geminiLive.verify.ts",
+    "verify:recording": "tsx src/recording/recording.verify.ts",
+    "verify:booking": "tsx src/booking/booking.verify.ts",
+    "verify:calendar": "tsx src/booking/calendar.verify.ts",
+    "verify:archive": "tsx src/archive.verify.ts",
+    "verify:sms": "tsx src/sms.verify.ts",
+    "verify:notify": "tsx src/notify.verify.ts",
+    "verify:greeting": "tsx src/greeting.verify.ts",
+    "verify:gaps": "tsx src/gaps.verify.ts",
+    "check:docs": "tsx tools/check-docs.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LewisWCampbell/ELLIE.git"
+  },
+  "keywords": [],
+  "author": "Lewis Campbell",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/LewisWCampbell/ELLIE/issues"
+  },
+  "homepage": "https://github.com/LewisWCampbell/ELLIE#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@anthropic-ai/vertex-sdk": "^0.19.1",
+    "@google-cloud/storage": "^8.0.0",
+    "@google/genai": "^2.19.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "twilio": "^6.0.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.11",
+    "typescript": "^7.0.2"
+  },
+  "type": "commonjs",
+  "private": true
+}

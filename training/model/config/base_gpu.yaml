@@ -1,0 +1,110 @@
+# Real GPU run: LoRA fine-tune of a Moshi-family 7B LM for tool calls.
+# Paths are relative to this file. Values marked UNVERIFIED come from reading
+# kyutai-labs/moshi, kyutai-labs/moshi-finetune and NVIDIA/personaplex source
+# on 2026-11-07, not from running them.
+
+seed: 0
+run_dir: ../runs/elle_tools_v1          # checkpoints, logs, eval reports
+
+data:
+  episodes: ../../data/out/episodes.jsonl   # dataset agent's output (adjust to its real path)
+  prepared_dir: ../runs/prepared_v1
+  # Plain conversation (no tools) mixed into every batch to protect
+  # conversational quality, and held out to measure forgetting. Build it with
+  #   plain.py synth    (tool-free calls from training/data's builder), or
+  #   plain.py external (moshi-finetune format, e.g. kyutai/DailyTalkContiguous; UNVERIFIED)
+  # into this directory (splits "train" and "val"). null = no mixing, no
+  # forgetting check. Once set, the directory must exist or train.py stops.
+  plain_prepared_dir: null            # e.g. ../runs/plain_v1
+  plain_fraction: 0.3                 # share of every batch drawn from the plain set (exact over time)
+  plain_train_split: train
+  plain_eval_split: val               # held out: base vs current text loss -> run_dir/plain_forgetting.json
+
+tokenizer:
+  kind: sentencepiece
+  path: null        # null = the checkpoint's own tokenizer_spm_32k_3.model, looked up from hf_repo (UNVERIFIED)
+  hf_repo: nvidia/personaplex-7b-v1   # keep equal to model.hf_repo
+
+special_tokens: ["<tool>", "</tool>", "<result id=", "</result>"]
+special_tokens_count: 4
+
+model:
+  backend: moshi    # moshi | tiny
+  # PersonaPlex (preferred; needs its fork of the moshi package and the
+  # license accepted on Hugging Face) or Kyutai Moshiko as a fallback.
+  hf_repo: nvidia/personaplex-7b-v1   # or kyutai/moshiko-pytorch-bf16
+  dtype: bfloat16
+  gradient_checkpointing: true
+  card: 2048                          # Mimi codebook size (UNVERIFIED-by-run, read from loaders.py)
+
+lora:
+  enable: true
+  impl: auto        # auto: kyutai moshi.modules.lora if present, else our wrapper (PersonaPlex)
+  rank: 64          # moshi-finetune recommends <=128; 64 is plenty for a narrow skill
+  scaling: 2.0
+  dropout: 0.0
+  include_prefixes: ["transformer.", "depformer."]
+  train_new_token_rows: true          # the 4 new rows of text_emb, depformer_text_emb, text_linear
+
+prepare:
+  max_frames: 1250                    # 100 s windows (moshi-finetune duration_sec: 100)
+  tail_sec: 1.0
+  prefer_dataset_serializer: true
+  audio:
+    mode: mimi                        # placeholder | zero | mimi
+    audio_dir: ../../data/out/audio   # stereo 24 kHz: ch0 Elle, ch1 caller (+ alignment .json)
+    hf_repo: kyutai/moshiko-pytorch-bf16
+    device: cuda
+  # PersonaPlex keeps a system prompt pinned in context; train with the same one
+  # production will use (wrapped in <system> tags like PersonaPlex's server).
+  prompt_text: "<system> You work for Sam as his phone assistant and your name is Elle. You book intro calls. <system>"
+  prompt_pad_frames: 11
+
+train:
+  backend_device: cuda
+  max_steps: 2000
+  batch_size: 8                       # per GPU; 8 x 100 s fits ~40 GB with grad checkpointing (moshi-finetune: 16 -> 39.6 GB on H100)
+  grad_accum: 2
+  seq_frames: 1250
+  num_threads: 8
+  optim:
+    lr: 4.0e-6                        # moshi-finetune: 2e-6 recommended, 4e-6 in their example curve
+    new_token_lr: 1.0e-4              # new embedding rows start from scratch
+    weight_decay: 0.1
+    pct_start: 0.05
+    betas: [0.9, 0.95]
+    grad_clip: 1.0
+  negatives: unlikelihood             # exclude | unlikelihood | include (never include for real runs)
+  unlikelihood_weight: 0.5
+
+loss:
+  text_padding_weight: 0.5            # moshi-finetune default
+  special_token_weight: 2.0           # upweight <tool>/</tool> targets (rare, critical)
+  audio_weight: 1.0
+  first_codebook_weight_multiplier: 100.0   # moshi-finetune default (semantic codebook)
+  user_audio_weight: 0.0              # PersonaPlex depformer also predicts user codes (dep_q=16); UNVERIFIED whether to train them
+
+eval:
+  every_steps: 100
+  split: val
+  max_episodes: 500
+  ckpt_every_steps: 100
+  keep_checkpoints: 5
+  listen: 0                           # model mode: save Elle's audio for N episodes as WAV (or --listen N)
+  gen:
+    max_wait_frames: 6                # result injected at the next word boundary, at most 0.48 s late
+    temperature_text: 0.0             # ~greedy text for metrics; production uses Moshi defaults (0.7 / top-k 25)
+    top_k_text: 25
+    temperature_audio: 0.8            # audio always samples: greedy Moshi audio degrades (Moshi default 0.8 / top-k 250)
+    top_k_audio: 250
+    elle_audio: generate              # tiny backend only: generate | teacher (replay recorded codes)
+    voice_prompt: null                # PersonaPlex voice prompt (e.g. a path to NATF2.pt); set = PersonaPlex runs
+                                      # its own system prompt (step_system_prompts). UNVERIFIED
+  gates:
+    premature_claim_rate: {max: 0.01}
+    write_unsafe_rate: {max: 0.0}
+    tool_selection_accuracy: {min: 0.95}
+    arg_exact_match: {min: 0.95}
+    dead_air_rate: {max: 0.10}
+    silent_write_narration_rate: {max: 0.02}
+    plain_text_loss_delta: {max: 0.05}  # forgetting: held-out plain text loss may rise at most this much over the base

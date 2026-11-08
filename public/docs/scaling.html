@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architectures by volume · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Architectures by volume</h1>
+<p class="lead">There is no single best voice architecture; there is a best architecture
+<em>per call volume</em>, and the honest engineering is knowing where the boundaries sit.
+This page puts numbers on every option, marks the crossover points where the answer changes,
+and prices what each shift buys and costs.</p>
+
+<h2>The four architectures, priced</h2>
+<p>Same job, four ways to build it. Marginal cost per talking minute, with the qualities each
+one keeps or gives up (the mechanics of each are on the
+<a href="architecture.html">architecture page</a>):</p>
+<div class="tablewrap"><table>
+<tr><th>Architecture</th><th>≈ $/min*</th><th>Keeps</th><th>Gives up</th></tr>
+<tr><td><strong>Cached cascade</strong> (production today)</td><td>0.025 list · ~0.017 warm</td>
+<td>Streaming ~1s first audio, house voice, verbatim scripts, tool-reliable text LLM, full logs</td>
+<td>Turn-taking runs on silence timers, engineered down but not eliminated</td></tr>
+<tr><td><strong>Director</strong> (fuse hearing+judgment, hosted)</td><td>~0.015–0.020 target</td>
+<td>Everything the cascade keeps, plus audio-native turn-taking; brain wakes for ~20% of turns</td>
+<td>Duplex-model maturity risk; the delegation-leak eval gates launch</td></tr>
+<tr><td><strong>Fused speech-to-speech</strong> (demo mode)</td><td>~0.15–0.30</td>
+<td>The most natural turn-taking available today, zero orchestration code</td>
+<td>House voice, verbatim delivery, cost tiering, and it costs 5–10× the price</td></tr>
+<tr><td><strong>Self-hosted open stack</strong></td><td>~0.003–0.006 at utilization</td>
+<td>Lowest unit cost, data residency, no per-token bills</td>
+<td>Ops burden, capacity planning, model quality drift, $600+/GPU/month whether calls come or not</td></tr>
+</table></div>
+<p class="lead" style="font-size:0.85rem">*Infrastructure only. Telephony adds ~$0.009/min to
+every option equally, and is the true floor no architecture removes. A managed voice-agent
+platform (ConversationRelay, Voice Agent API) layers $0.059–0.075/min on top of these, roughly
+2.5× the parts cost for the orchestration this codebase implements itself.</p>
+
+<h2>Where the answer flips</h2>
+<figure class="figwrap"><svg class="sdg chart" viewBox="0 0 780 360" width="780" height="360" role="img" aria-label="Monthly infrastructure cost versus call volume for each architecture, log-log, with crossover points"><line class="sdg-life" x1="80" y1="40" x2="80" y2="300"/><text class="sdg-lbl" x="80" y="318" text-anchor="middle">1K</text><line class="sdg-life" x1="242" y1="40" x2="242" y2="300"/><text class="sdg-lbl" x="242" y="318" text-anchor="middle">10K</text><line class="sdg-life" x1="405" y1="40" x2="405" y2="300"/><text class="sdg-lbl" x="405" y="318" text-anchor="middle">100K</text><line class="sdg-life" x1="568" y1="40" x2="568" y2="300"/><text class="sdg-lbl" x="568" y="318" text-anchor="middle">1M</text><line class="sdg-life" x1="730" y1="40" x2="730" y2="300"/><text class="sdg-lbl" x="730" y="318" text-anchor="middle">10M</text><line class="sdg-life" x1="80" y1="300" x2="730" y2="300"/><text class="sdg-lbl" x="72" y="304" text-anchor="end">$10</text><line class="sdg-life" x1="80" y1="241" x2="730" y2="241"/><text class="sdg-lbl" x="72" y="245" text-anchor="end">$100</text><line class="sdg-life" x1="80" y1="182" x2="730" y2="182"/><text class="sdg-lbl" x="72" y="186" text-anchor="end">$1K</text><line class="sdg-life" x1="80" y1="123" x2="730" y2="123"/><text class="sdg-lbl" x="72" y="127" text-anchor="end">$10K</text><line class="sdg-life" x1="80" y1="64" x2="730" y2="64"/><text class="sdg-lbl" x="72" y="68" text-anchor="end">$100K</text><text class="sdg-lbl" x="405" y="334" text-anchor="middle">talking minutes per month (log)</text><text class="sdg-lbl" x="18" y="170" text-anchor="middle" transform="rotate(-90 18 170)">replaceable infra $/month (log)</text><polyline class="ch-hosted" points="80,307 242,248 389,195 568,130 668,93 730,71" fill="none"/><polyline class="ch-gpu" points="80,195 483,195" fill="none"/><line class="ch-gpu ch-cap" x1="483" y1="195" x2="483" y2="56"/><text class="sdg-lbl" x="483" y="52" text-anchor="middle">single-GPU ceiling</text><polyline class="ch-fleet" points="454,93 568,93 668,92 730,90" fill="none"/><circle class="ch-dot" cx="389" cy="195" r="5"/><text class="sdg-lbl ch-mark" x="399" y="185" text-anchor="start">80K min/mo: first GPU pencils</text><circle class="ch-dot" cx="668" cy="92" r="5"/><text class="sdg-lbl ch-mark" x="658" y="82" text-anchor="end">4.2M min/mo: fleet wins outright</text><line class="ch-hosted" x1="88" y1="51" x2="114" y2="51"/><text class="sdg-lbl" x="120" y="55" text-anchor="start">hosted APIs (cached cascade)</text><line class="ch-gpu" x1="88" y1="69" x2="114" y2="69"/><text class="sdg-lbl" x="120" y="73" text-anchor="start">one self-hosted GPU</text><line class="ch-fleet" x1="88" y1="87" x2="114" y2="87"/><text class="sdg-lbl" x="120" y="91" text-anchor="start">self-hosted fleet</text></svg><figcaption>Where each architecture is cheapest (log-log, schematic). Below the first dot, hosted APIs win by an order of magnitude; between the dots, hybrids pencil; past the second, a fleet wins outright. Telephony (~$0.009/min) is excluded; every option pays it equally.</figcaption></figure>
+
+<p>Both crossovers are divisions, not opinions. A mid-range cloud GPU runs ≈$600/month whether
+or not calls arrive; the cached cascade's replaceable spend is ≈$0.0075/min. So the first GPU
+pays for itself at <strong>600 ÷ 0.0075 = 80,000 min/month</strong> (≈16,000 five-minute
+calls). A production-grade fleet with redundancy, failover, and an ops rotation carries
+≈$31,250/month of fixed cost, which the same division puts at
+<strong>≈4.17M min/month</strong> (≈833,000 calls). Below a crossover, the "cheap" option is
+the expensive one.</p>
+
+<h2>Band by band: what to run, and why</h2>
+<div class="tablewrap"><table>
+<tr><th>Volume band</th><th>Cheapest stack</th><th>The reasoning</th></tr>
+<tr><td><strong>Demo / portfolio</strong><br>&lt; 2K min/mo</td><td>Cached cascade, hosted</td>
+<td>Fixed costs dominate: an always-warm instance ($10–25) plus the number ($1.15) dwarf usage.
+Elle's own bill lives here. Self-hosting would multiply cost ~10×; the fused demo mode is worth
+its premium only as a showpiece, and on a spot GPU a demo costs $2–3/month.</td></tr>
+<tr><td><strong>Side business</strong><br>2K – 80K min/mo</td><td>Cached cascade, hosted</td>
+<td>Still strictly cheapest: usage grows but never reaches the first GPU's fixed cost. Adopt
+the director here for <em>experience</em>, not for savings: turn-taking quality is the
+argument, hosted economics are unchanged.</td></tr>
+<tr><td><strong>First crossover</strong><br>80K – 500K min/mo</td><td>Hybrid</td>
+<td>Self-host the highest-spend speech component (STT or TTS) on one GPU; keep the LLM on
+hosted APIs where caching already did the work. One box, no fleet ops, and the division above
+says it pays from day one of the band.</td></tr>
+<tr><td><strong>Scale-out</strong><br>500K – 4.2M min/mo</td><td>Mixed fleet + director</td>
+<td>Utilization engineering starts mattering more than unit prices. The director's escalation
+tiering is the big lever now: a cheap fused talker absorbs ~80% of turns, so the metered brain
+bills on a fifth of the traffic.</td></tr>
+<tr><td><strong>Call-center</strong><br>&gt; 4.2M min/mo</td><td>Self-hosted fleet, full stack</td>
+<td>Past the second crossover a fleet wins outright, and per-token pricing becomes the thing
+you left behind. This is the regime the worked example below lives in.</td></tr>
+</table></div>
+
+<h2>The worked example: 1.25M calls a month</h2>
+<p>The modeled deployment: 1.25M calls/month at 5 minutes average: 6.25M talking minutes,
+comfortably past the second crossover.</p>
+<div class="tablewrap"><table>
+<tr><th>Line</th><th>$/month</th><th>Notes</th></tr>
+<tr><td>Human-agent equivalent</td><td>≈ $5.6M</td><td>The baseline the whole exercise displaces.</td></tr>
+<tr><td>Cascade at list prices</td><td>≈ $190K</td><td>Naive hosted build, no optimization.</td></tr>
+<tr><td>Optimized (caching + batching + tiering + fleet)</td><td>≈ $85K</td><td>Prompt caching and turn batching cut the LLM line ~85%; escalation tiering and self-hosted speech do the rest.</td></tr>
+</table></div>
+<p><strong>The sensitivity that outranks every architecture choice: containment.</strong>
+Every call the AI resolves end-to-end costs ~$0.07 optimized; every call it escalates costs a
+human ~$4.50. Moving containment a single point at this volume swings ≈$55K/month, more than
+most infrastructure line items combined. Buy containment (better prompts, better tools, better
+escalation judgment) before buying cheaper GPUs.</p>
+
+<h2>The model, in full</h2>
+<p>Every number above traces to an editable workbook
+(<a href="ai-callcenter-cost-model.xlsx">download the model</a>: assumptions, LLM token
+calculator, scenario comparison, and the crossover sheet, with inputs marked for
+replacement by real quotes and production measurements). These are its assumptions:</p>
+
+<h3>Demand and the human baseline</h3>
+<div class="tablewrap"><table>
+<tr><th>Input</th><th>Value</th><th>Note</th></tr>
+<tr><td>Calls per month</td><td>1,250,000</td><td>The modeled call-center demand.</td></tr>
+<tr><td>Average handle time</td><td>5.0 min</td><td>6.25M conversation minutes per month.</td></tr>
+<tr><td>Loaded human cost</td><td>$0.90 / agent-minute</td><td>Wages, benefits, telecom, supervision; replace with your BPO rate.</td></tr>
+<tr><td>Human cost per call</td><td>$4.50</td><td>The number every AI scenario competes against.</td></tr>
+<tr><td><strong>All-human baseline</strong></td><td><strong>≈ $5.63M / month</strong></td><td>1.25M calls × $4.50.</td></tr>
+</table></div>
+
+<h3>Unit prices per minute, by scenario</h3>
+<div class="tablewrap"><table>
+<tr><th>Component</th><th>List</th><th>Negotiated</th><th>Hybrid self-host</th></tr>
+<tr><td>Telephony</td><td>$0.0090</td><td>$0.0045</td><td>$0.0045</td></tr>
+<tr><td>Speech-to-text</td><td>$0.0077</td><td>$0.0040</td><td>$0.0015</td></tr>
+<tr><td>Text-to-speech</td><td>$0.0056</td><td>$0.0030</td><td>$0.0010</td></tr>
+<tr><td>LLM</td><td colspan="2">from the token calculator below</td><td>$0.0030</td></tr>
+<tr><td>Fixed monthly</td><td>$2,000</td><td>$2,000</td><td>$25,000 (GPU fleet + ops staffing)</td></tr>
+</table></div>
+
+<h3>The LLM line, from token math</h3>
+<p>The LLM cost is not a guess; it is computed from the conversation shape the
+<code>[llm]</code> log lines measure in production:</p>
+<div class="tablewrap"><table>
+<tr><th>Input</th><th>Value</th></tr>
+<tr><td>Turns per call</td><td>13</td></tr>
+<tr><td>Cached prefix (persona + knowledge + history)</td><td>7,000 tokens</td></tr>
+<tr><td>New input per turn (utterance + tool results)</td><td>150 tokens</td></tr>
+<tr><td>Output per turn (120-token cap in code)</td><td>110 tokens</td></tr>
+<tr><td>Cache hit rate across turns</td><td>90%</td></tr>
+<tr><td>Haiku pricing (per MTok)</td><td>$1 in · $5 out · $0.10 cache read · $1.25 cache write</td></tr>
+</table></div>
+<p>At those inputs the prefix bills at the cache-blended rate on every turn instead of full
+price, which is the arithmetic behind "caching cuts the LLM line ~85%." Set the hit rate to
+zero in the workbook to see the uncached cost; the difference is the whole caching argument in
+one cell.</p>
+
+<h3>Containment: the assumption that owns the outcome</h3>
+<div class="tablewrap"><table>
+<tr><th>Input</th><th>Value</th><th>Meaning</th></tr>
+<tr><td>Containment rate</td><td>60%</td><td>Calls the AI resolves end to end. Deliberately conservative; mature deployments report higher.</td></tr>
+<tr><td>AI minutes before transfer</td><td>1.5</td><td>What a non-contained call costs in AI time before handing off.</td></tr>
+<tr><td>Human minutes after transfer</td><td>4.0</td><td>$3.60 of human time per escalated call, and it dominates that call's cost.</td></tr>
+</table></div>
+<p>Run the sensitivity and the structure of the business is visible: a contained call costs
+pennies, an escalated call costs $3.60 of human time plus its AI minutes, so
+<strong>each point of containment at this volume moves ≈$55K/month</strong>. No unit-price
+negotiation compares. That is why the engineering pages spend so much effort on grounding,
+tools, and escalation judgment: in this model they are the financial levers.</p>
+
+<h2>What each shift buys and costs</h2>
+<div class="tablewrap"><table>
+<tr><th>Shift</th><th>You gain</th><th>You pay</th><th>Take it when…</th></tr>
+<tr><td>Cascade → <strong>+ caching &amp; batching</strong></td><td>~85% off the LLM line, faster prefill</td><td>Nothing: it's code, already shipped</td><td>Always. There is no counter-case.</td></tr>
+<tr><td>Hosted → <strong>managed platform</strong></td><td>Orchestration you don't write</td><td>~2.5× per minute, less control at every layer</td><td>You lack the engineering, and volume is small enough that 2.5× is cheaper than a hire.</td></tr>
+<tr><td>Cascade → <strong>director</strong></td><td>Audio-native turn-taking; brain bills on ~20% of turns</td><td>Duplex-model maturity risk; delegation-leak eval must pass first</td><td>Experience quality is a differentiator, or volume makes the tiering material.</td></tr>
+<tr><td>Hosted speech → <strong>self-hosted speech</strong></td><td>Unit cost ÷ 3–5 above the crossover</td><td>Ops, capacity planning, quality ownership</td><td>Sustained volume &gt; 80K min/month, never below it.</td></tr>
+<tr><td>Anything → <strong>fused speech-to-speech</strong></td><td>Best-in-class naturalness, zero pipeline code</td><td>5–10× price, paraphrased compliance, voice lock-in</td><td>Demos and prototypes; revisit as fused pricing falls.</td></tr>
+</table></div>
+
+<h2>The principle underneath</h2>
+<p>Architecture follows volume, not fashion. The system is built so these shifts are
+configuration, not rewrites: the <a href="architecture.html">provider seam</a> makes a new
+stack a third factory behind the same interface, the runtime switch flips it per call, and the
+<a href="cost.html">token telemetry</a> tells you, in production numbers, when a crossover is
+actually approaching rather than theoretically near. Decide from the logs, not the roadmap.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

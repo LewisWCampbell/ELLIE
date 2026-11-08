@@ -1,0 +1,355 @@
+"""Evaluation: the five CONTRACT.md metrics, as a JSON report + markdown summary.
+
+Modes
+  reference  Score the dataset itself, to test the metrics:
+               * ground truth with the dataset's claim_spans labels: every
+                 positive must score perfectly, every labelled negative must be
+                 flagged;
+               * the claim *detector* (used for model outputs, which have no
+                 labels) against those labels: precision / recall;
+               * round trip: the prepared training text stream decoded back into
+                 events and scored with the detector, i.e. the exact path a
+                 model's output takes.
+  model      Closed-loop generation with a trained checkpoint: caller audio is
+             replayed from the episode, Elle's text and audio are generated
+             frame by frame, a </tool> triggers the tool (an oracle answering
+             from the episode's own results, after its latency) and the result
+             is injected into the text stream exactly as at runtime
+             (runtime.Injector). The output is decoded into events and scored.
+             The loop is genloop.closed_loop, shared by both backends: tiny
+             (TinyFrameGenerator, CPU, tested) and real Moshi/PersonaPlex
+             (moshi_backend.MoshiFrameGenerator over LMGen, UNVERIFIED).
+             Windows of long episodes are stitched back into whole episodes.
+             --listen N writes Elle's generated audio for N episodes as WAV
+             (real backend; a no-op on CPU).
+
+  python3 training/model/evaluate.py --config training/model/config/dryrun.yaml --mode reference
+  python3 training/model/evaluate.py --config training/model/config/dryrun.yaml --mode model [--listen 5]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any, Dict, List, Optional
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import metrics as M  # noqa: E402
+from config_util import load_config, resolve_path  # noqa: E402
+from runtime import decode_text_stream  # noqa: E402
+from textvocab import build_tokenizer  # noqa: E402
+
+GATED = ["tool_selection_accuracy", "arg_exact_match", "premature_claim_rate", "write_unsafe_rate",
+         "silent_write_narration_rate", "dead_air_rate"]
+
+
+def load_jsonl(path: str) -> List[dict]:
+    with open(path) as f:
+        return [json.loads(l) for l in f if l.strip()]
+
+
+# dataset labels.negative_kind -> the flag that must catch it
+NEG_KIND_FLAG = {"premature_claim": "premature_claim", "write_without_readback": "unsafe_write",
+                 "dead_air": "dead_air", "narrated_silent_write": "narrated_silent_write"}
+
+
+def _neg_kind(ep_score: dict, eps_by_id: Dict[str, dict]) -> Optional[str]:
+    ep = eps_by_id.get(ep_score["id"], {})
+    return ep.get("labels", {}).get("negative_kind")
+
+
+def _summarize_group(per: List[dict], eps_by_id: Optional[Dict[str, dict]] = None) -> Dict[str, Any]:
+    pos = [p for p in per if not p["negative"]]
+    neg = [p for p in per if p["negative"]]
+    right = wrong_metric = 0
+    for p in neg:
+        k = _neg_kind(p, eps_by_id or {})
+        if k in NEG_KIND_FLAG:
+            if p["flags"].get(NEG_KIND_FLAG[k]):
+                right += 1
+            elif p["flagged"]:
+                wrong_metric += 1
+    return {
+        "negatives_by_kind": {"caught_by_matching_metric": right, "caught_only_by_other_metric": wrong_metric,
+                              "with_kind_label": sum(1 for p in neg if _neg_kind(p, eps_by_id or {}) in NEG_KIND_FLAG)},
+        "positives": {"n": len(pos), "flagged": [{"id": p["id"], "flags": [k for k, v in p["flags"].items() if v]}
+                                                for p in pos if p["flagged"]]},
+        "negatives": {"n": len(neg), "caught": sum(1 for p in neg if p["flagged"]),
+                      "uncaught": [{"id": p["id"], "scenario": p["scenario"]} for p in neg if not p["flagged"]],
+                      "by_flag": M._count(k for p in neg for k, v in p["flags"].items() if v)},
+    }
+
+
+def detector_agreement(eps: List[dict]) -> Dict[str, Any]:
+    """Event-level agreement of metrics.looks_like_claim with claim_spans."""
+    tp = fp = fn = 0
+    misses, false_alarms = [], []
+    for ep in eps:
+        labelled = {c.get("event_index") for c in ep.get("labels", {}).get("claim_spans", []) or []}
+        for i, e in enumerate(ep["events"]):
+            if e.get("type") != "speech" or e.get("ch") != "elle":
+                continue
+            det = M.looks_like_claim(e.get("text", ""))
+            if det and i in labelled:
+                tp += 1
+            elif det:
+                fp += 1
+                if len(false_alarms) < 20:
+                    false_alarms.append({"id": ep["id"], "text": e.get("text")})
+            elif i in labelled:
+                fn += 1
+                if len(misses) < 20:
+                    misses.append({"id": ep["id"], "text": e.get("text")})
+    p = tp / (tp + fp) if tp + fp else None
+    r = tp / (tp + fn) if tp + fn else None
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": p, "recall": r, "misses": misses, "false_alarms": false_alarms}
+
+
+def readback_agreement(eps: List[dict]) -> Dict[str, Any]:
+    """The readback/yes heuristic (used on model outputs) vs labels.write_gates."""
+    agree = disagree = 0
+    examples = []
+    for ep in eps:
+        gates = {g.get("call_id"): g for g in ep.get("labels", {}).get("write_gates") or []}
+        for c in M.calls(ep["events"]):
+            if not M.is_gated(c) or c.get("id") not in gates:
+                continue
+            lab = bool(M.write_problems(c, ep["events"], gates[c.get("id")]))
+            heu = bool(M.write_problems(c, ep["events"]))
+            if lab == heu:
+                agree += 1
+            else:
+                disagree += 1
+                if len(examples) < 10:
+                    examples.append({"id": ep["id"], "call": c.get("id"), "label_unsafe": lab, "heuristic_unsafe": heu,
+                                     "heuristic": M.write_problems(c, ep["events"])})
+    return {"agree": agree, "disagree": disagree,
+            "agreement": agree / (agree + disagree) if agree + disagree else None, "disagreements": examples}
+
+
+def reference_report(eps: List[dict], prepared: Optional[List[dict]], tok, gates: dict) -> Dict[str, Any]:
+    by_id = {ep["id"]: ep for ep in eps}
+    per = [M.score_episode(ep) for ep in eps]
+    rep: Dict[str, Any] = {"mode": "reference", "ground_truth": {"metrics": M.aggregate([p for p in per if not p["negative"]]),
+                                                                  "metrics_all": M.aggregate(per),
+                                                                  **_summarize_group(per, by_id)},
+                           "claim_detector": detector_agreement(eps), "readback_detector": readback_agreement(eps)}
+    rep["ground_truth"]["gates_on_positives"] = M.check_gates(rep["ground_truth"]["metrics"], gates)
+    if prepared:
+        rt = []
+        for ex in prepared:
+            ep = by_id.get(ex["episode_id"])
+            if ep is None or "#w" in ex["id"]:
+                continue  # windows of long episodes are skipped in the round trip
+            rt.append(M.score_episode(ep, merge_events(ep, decode_text_stream(ex["text"], tok, ex["meta"]["frame_offset"])),
+                                      claim_source="detected"))
+        rep["round_trip"] = {"metrics": M.aggregate([p for p in rt if not p["negative"]]), **_summarize_group(rt, by_id)}
+    rep["per_episode"] = per
+    return rep
+
+
+def merge_events(ep: dict, elle_events: List[dict]) -> List[dict]:
+    """Caller side from the episode (it is replayed), Elle side + results from
+    the decoded stream."""
+    caller = [e for e in ep["events"] if e.get("type") == "speech" and e.get("ch") != "elle"]
+    return sorted(caller + elle_events, key=lambda e: e["t"])
+
+
+# --- model mode -------------------------------------------------------------------
+
+def make_generator(cfg: dict, base: str, ckpt: Optional[str] = None):
+    """(FrameGenerator, tokenizer, checkpoint path) for the configured backend.
+    Both backends then run the same genloop.closed_loop."""
+    from genloop import TinyFrameGenerator
+    from train import latest_checkpoint, load_for_eval
+
+    gcfg = cfg.get("eval", {}).get("gen", {})
+    if cfg["model"]["backend"] == "tiny":
+        model, tok, _new_ids, ckpt = load_for_eval(cfg, base, ckpt)
+        return TinyFrameGenerator(model), tok, ckpt
+    # Real Moshi / PersonaPlex. UNVERIFIED (never run): moshi_backend.load_for_inference
+    # and MoshiFrameGenerator are written from source, see their docstrings.
+    from moshi_backend import MoshiFrameGenerator, load_for_inference  # pragma: no cover
+
+    ckpt = ckpt or latest_checkpoint(resolve_path(cfg["run_dir"], base))
+    if ckpt is None:
+        raise FileNotFoundError("no checkpoint to evaluate")
+    device = cfg.get("train", {}).get("backend_device", "cuda")
+    lm, mimi, tok, _ids = load_for_inference(cfg, ckpt, device)
+    return MoshiFrameGenerator(lm, mimi, tok, gcfg, device), tok, ckpt
+
+
+def write_wav(path: str, pcm, sample_rate: int) -> None:
+    """Mono 16-bit WAV with the standard library (no soundfile dependency)."""
+    import wave
+
+    import numpy as np
+
+    x = (np.clip(np.asarray(pcm, dtype=np.float32), -1.0, 1.0) * 32767).astype("<i2")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(sample_rate))
+        w.writeframes(x.tobytes())
+
+
+def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], gates: dict,
+                 ckpt: Optional[str] = None, listen: int = 0, out_dir: Optional[str] = None,
+                 generator=None, tok=None) -> Dict[str, Any]:
+    from genloop import closed_loop, stitch_windows
+
+    if generator is None:
+        generator, tok, ckpt = make_generator(cfg, base, ckpt)
+    ecfg = cfg.get("eval", {})
+    gcfg = ecfg.get("gen", {})
+    by_id = {ep["id"]: ep for ep in eps}
+    per, samples, listened, calls = [], [], [], []
+    exs = stitch_windows([ex for ex in prepared if ex["episode_id"] in by_id])[: int(ecfg.get("max_episodes", 100))]
+    listen_note = None
+    for ex in exs:
+        ep = by_id[ex["episode_id"]]
+        out = closed_loop(generator, tok, ex, ep, gcfg)
+        elle = decode_text_stream(out["text"], tok, ex["meta"]["frame_offset"])
+        sc = M.score_episode(ep, merge_events(ep, elle), claim_source="detected")
+        per.append(sc)
+        calls += [dict(c, episode=ep["id"]) for c in out["calls"]]
+        if len(samples) < 5:
+            samples.append({"id": ep["id"], "decoded": tok.decode(out["text"]), "events": elle, "calls": out["calls"]})
+        if listen and len(listened) < listen and out_dir:
+            audio = generator.decode_audio()
+            if audio is None:
+                listen_note = "listen: no-op, this backend has no audio decoder (CPU / tiny model, placeholder codes)"
+            else:
+                path = os.path.join(out_dir, "listen", f"{ep['id']}.wav")
+                write_wav(path, audio[0], audio[1])
+                listened.append(path)
+    pos = [p for p in per if not p["negative"]]
+    m = M.aggregate(pos)
+    waits = [c["inject_frame"] - c["ready_frame"] for c in calls if c.get("inject_frame") is not None]
+    rep = {"mode": "model", "backend": cfg["model"]["backend"], "checkpoint": ckpt, "metrics": m,
+           "metrics_all": M.aggregate(per), "gates": M.check_gates(m, gates), **_summarize_group(per, by_id),
+           "injection": {"calls": len(calls), "injected": len(waits),
+                         "mean_wait_frames_after_ready": (sum(waits) / len(waits)) if waits else None,
+                         "max_wait_frames_after_ready": max(waits) if waits else None},
+           "listen": {"files": listened, "note": listen_note}, "samples": samples, "per_episode": per}
+    fpath = os.path.join(resolve_path(cfg["run_dir"], base), "plain_forgetting.json")
+    if os.path.exists(fpath):
+        with open(fpath) as f:
+            rep["plain_forgetting"] = json.load(f)
+    return rep
+
+
+# --- output ----------------------------------------------------------------------
+
+def _fmt(v: Any) -> str:
+    return "n/a" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))
+
+
+def markdown(rep: Dict[str, Any]) -> str:
+    lines = [f"# Evaluation ({rep['mode']})", ""]
+    if rep["mode"] == "reference":
+        gt = rep["ground_truth"]
+        lines += ["## Ground truth (positives, labelled claims)", "", "| metric | value |", "|---|---|"]
+        lines += [f"| {k} | {_fmt(gt['metrics'].get(k))} |" for k in GATED]
+        lines += ["", f"- positives: {gt['positives']['n']}, flagged (should be 0): {len(gt['positives']['flagged'])}"
+                  f" {gt['positives']['flagged'][:10]}",
+                  f"- negatives: {gt['negatives']['n']}, caught: {gt['negatives']['caught']}"
+                  f" (by flag: {gt['negatives']['by_flag']}), uncaught: {gt['negatives']['uncaught'][:10]}"]
+        d = rep["claim_detector"]
+        lines += ["", f"## Claim detector vs labels", "",
+                  f"precision {_fmt(d['precision'])}, recall {_fmt(d['recall'])} (tp {d['tp']}, fp {d['fp']}, fn {d['fn']})",
+                  "", f"Readback/yes heuristic vs labels.write_gates: agreement {_fmt(rep['readback_detector']['agreement'])}"
+                  f" ({rep['readback_detector']['disagree']} disagreements)",
+                  "", f"Negatives caught by the metric matching their negative_kind: {gt['negatives_by_kind']}"]
+        if "round_trip" in rep:
+            rt = rep["round_trip"]
+            lines += ["", "## Round trip (prepared stream -> decoded events -> detector)", "", "| metric | value |", "|---|---|"]
+            lines += [f"| {k} | {_fmt(rt['metrics'].get(k))} |" for k in GATED]
+            lines += ["", f"- positives flagged: {len(rt['positives']['flagged'])} {rt['positives']['flagged'][:10]}",
+                      f"- negatives caught: {rt['negatives']['caught']}/{rt['negatives']['n']}"]
+    else:
+        lines += [f"checkpoint: `{rep['checkpoint']}`", "", "| metric | value | gate |", "|---|---|---|"]
+        for k in GATED:
+            g = rep["gates"].get(k, {})
+            if not g:
+                gate = ""
+            elif g.get("value") is None:
+                gate = "no data"
+            else:
+                gate = ("pass" if g["pass"] else "FAIL") + f" ({'<=' if 'max' in g else '>='} {g.get('max', g.get('min'))})"
+            lines.append(f"| {k} | {_fmt(rep['metrics'].get(k))} | {gate} |")
+        inj = rep.get("injection", {})
+        lines += ["", f"- tool calls made: {inj.get('calls')}, results injected: {inj.get('injected')},"
+                  f" mean frames from result ready to injection: {_fmt(inj.get('mean_wait_frames_after_ready'))}"]
+        pf = rep.get("plain_forgetting")
+        if pf:
+            g = pf.get("gate") or {}
+            lines.append(f"- plain-conversation text loss (held out): {pf['plain_text_loss']:.4f} vs base "
+                         f"{pf['plain_text_loss_base']:.4f}, delta {pf['plain_text_loss_delta']:+.4f}"
+                         + (f" ({'pass' if g.get('pass') else 'FAIL'}, max {g.get('max')})" if g else "")
+                         + f" at step {pf['step']}")
+        else:
+            lines.append("- plain-conversation forgetting: not measured (no data.plain_prepared_dir)")
+        if rep.get("listen", {}).get("note"):
+            lines.append(f"- {rep['listen']['note']}")
+        for pth in rep.get("listen", {}).get("files", []):
+            lines.append(f"- listen: `{pth}`")
+        lines += ["", f"- episodes scored: {rep['metrics']['episodes']} positives"
+                  f" (+{rep['negatives']['n']} negatives replayed, reported in metrics_all only)",
+                  f"- positives with any flag: {len(rep['positives']['flagged'])}"]
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--mode", choices=["reference", "model"], default="reference")
+    ap.add_argument("--episodes", help="episodes JSONL (default: the prepared, retimed episodes)")
+    ap.add_argument("--checkpoint")
+    ap.add_argument("--split", help="override eval.split ('all' for every split)")
+    ap.add_argument("--out", help="output directory (default: <run_dir>/eval)")
+    ap.add_argument("--listen", type=int, default=0,
+                    help="model mode: save Elle's generated audio for the first N episodes as WAV "
+                         "(decoded with Mimi; a no-op on the CPU/tiny backend)")
+    args = ap.parse_args(argv)
+    cfg, base = load_config(args.config)
+    prepared_dir = resolve_path(cfg["data"]["prepared_dir"], base)
+    eps_path = args.episodes or os.path.join(prepared_dir, "episodes.jsonl")
+    if not os.path.exists(eps_path):
+        eps_path = resolve_path(cfg["data"]["episodes"], base)
+    eps = load_jsonl(eps_path)
+    split = args.split or cfg.get("eval", {}).get("split", "val")
+    if args.mode == "model" and split != "all":
+        eps = [e for e in eps if e.get("split", "train") == split]
+    prepared = None
+    if os.path.exists(os.path.join(prepared_dir, "manifest.jsonl")):
+        from prepare import load_examples
+
+        prepared = load_examples(prepared_dir)
+    gates = cfg.get("eval", {}).get("gates", {})
+    tok = build_tokenizer(cfg.get("tokenizer", {}), base) if prepared is not None or args.mode == "model" else None
+    out_dir = args.out or os.path.join(resolve_path(cfg["run_dir"], base), "eval")
+    os.makedirs(out_dir, exist_ok=True)
+    if args.mode == "reference":
+        rep = reference_report(eps, prepared, tok, gates)
+    else:
+        rep = model_report(cfg, base, eps, prepared or [], gates, args.checkpoint,
+                           args.listen or int(cfg.get("eval", {}).get("listen", 0)), out_dir)
+    with open(os.path.join(out_dir, f"{args.mode}_report.json"), "w") as f:
+        json.dump(rep, f, indent=2, default=str)
+    md = markdown(rep)
+    with open(os.path.join(out_dir, f"{args.mode}_summary.md"), "w") as f:
+        f.write(md)
+    print(md)
+    print(f"wrote {out_dir}/{args.mode}_report.json")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

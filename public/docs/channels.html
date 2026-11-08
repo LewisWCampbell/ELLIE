@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web, SMS and intake · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Web, SMS and intake</h1>
+<p class="lead">The phone is the showpiece; three more channels share its brain. A website chat
+with the same grounding, a browser that can pair with a live call, an SMS agent that manages
+bookings by text, and a private intake channel where the owner directs Elle's outreach.</p>
+
+<h2>Website chat</h2>
+<p><code>POST /api/chat</code> runs the same persona and RAG grounding as the phone through the
+turn engine in <code>ai.ts</code>. The endpoint is deliberately defensive for a public API:
+rate-limited per IP (30 requests / 10 minutes), message length capped at 2,000 characters,
+history validated shape-by-shape and truncated to the last 10 turns. CORS allows the main
+site's origin so the chat can be embedded at lewiswcampbell.com.</p>
+
+<h2>Pairing a browser with a live phone call</h2>
+<p>Every realtime call gets a short pairing code, spoken digit by digit on request. Entering it
+on the website upgrades the visit: the browser joins the call's session over the
+<code>/ws</code> WebSocket and both sides of the conversation stream in as live transcripts.</p>
+<p><strong>One page, one experience.</strong> Chat and pairing share a single page on the main
+site (<code>SITE_URL</code> + <code>ASK_PATH</code>). Call transcripts render into the same log
+as the chat, in the same bubbles, and the one composer changes destination while a call is
+live: what you type goes into the call and Elle answers out loud. Pairing previously lived on
+the service's own origin as a separate unbranded page, which split the visitor experience
+across two domains; those paths now redirect. Because the page and the API are different
+origins, the pairing socket carries its own Origin allowlist, since CORS never applies to
+WebSockets.</p>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Phone call<small>says the pairing code</small></div>
+    <span class="darrow">↔</span>
+    <div class="dnode hot">CallSession<small>sessions.ts · in-memory,<br>keyed by call and by code</small></div>
+    <span class="darrow">↔</span>
+    <div class="dnode">Browser<small>/ws WebSocket</small></div>
+  </div>
+  <div class="drow">
+    <span class="dlabel">transcripts stream out · typed messages and choices flow in ·
+    show_work / show_choices render on screen</span>
+  </div>
+  <p class="cap">The pairing session is the meeting point: the voice pipeline pushes events to
+  it, the browser subscribes, and input flows back into the call.</p>
+</div>
+<p>It's two-way. The model has <code>show_work</code> and <code>show_choices</code> tools to
+put project screenshots and tappable options on the paired screen while talking. And the
+visitor can <em>type into the call</em>: a typed message is injected into the voice pipeline as
+a first-class turn, and Elle answers it out loud on the phone:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts · sendText()</div><pre>// A message typed on the paired website. Same pipeline as a spoken utterance
+// (queue + drain), so Elle answers it OUT LOUD on the call and the reply's
+// transcript streams back to the browser. The framing note tells the model
+// where the words came from without changing what the transcript shows.
+sendText(text: string): void {
+  const clean = text.trim();
+  if (!clean) return;
+  this.h.onUserTranscript?.(clean);
+  this.queue.push(`(Typed on the paired website, not spoken — answer out loud as usual.) ${clean}`);
+  void this.drain();
+}</pre></div>
+<p>The pairing view shows the conversation itself: transcripts and shared visuals, not
+Elle's internal notes. Pairing codes rate-limit at 10 attempts per minute per IP so codes
+can't be brute-forced, and sessions sweep away after the call ends.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 660 470" width="660" height="470" role="img" aria-label="Pairing a browser with a live call"><defs><marker id="ah-pair" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="462"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="462"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="462"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="462"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Caller (phone)</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">Cascade</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">CallSession</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">Browser</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">&quot;can I see that on screen?&quot;</text><line class="sdg-ret" x1="250" y1="108" x2="94" y2="108" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="170" y="102" text-anchor="middle">speaks the pairing code, digit by digit</text><line class="sdg-msg" x1="570" y1="142" x2="414" y2="142" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="490" y="136" text-anchor="middle">POST /api/pair {code} · 10/min/IP</text><line class="sdg-ret" x1="410" y1="176" x2="566" y2="176" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="490" y="170" text-anchor="middle">WS /ws joined to this call&#x27;s session</text><line class="sdg-msg" x1="250" y1="210" x2="406" y2="210" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="330" y="204" text-anchor="middle">both sides&#x27; transcripts as they happen</text><line class="sdg-ret" x1="410" y1="244" x2="566" y2="244" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="490" y="238" text-anchor="middle">live transcript events</text><line class="sdg-msg" x1="250" y1="278" x2="406" y2="278" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="330" y="272" text-anchor="middle">show_work / show_choices tool output</text><line class="sdg-msg" x1="570" y1="312" x2="414" y2="312" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="490" y="306" text-anchor="middle">typed message (length-capped)</text><line class="sdg-msg" x1="410" y1="346" x2="254" y2="346" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="330" y="340" text-anchor="middle">injectText → queued as a real turn</text><line class="sdg-ret" x1="250" y1="380" x2="94" y2="380" marker-end="url(#ah-pair)"/><text class="sdg-lbl" x="170" y="374" text-anchor="middle">Elle answers OUT LOUD on the call</text><g class="sdg-note"><rect x="223" y="412" width="425" height="26" rx="5"/><text x="435" y="429" text-anchor="middle">session dies with the call; codes are unusable after hangup</text></g></svg><figcaption>Two-way pairing: the phone drives the screen, and typed input flows back into the spoken conversation.</figcaption></figure>
+<h2>SMS: bookings by text</h2>
+<p>Texting the same number reaches a leaner agent tuned for one job: managing intro-call
+bookings. Its persona enforces SMS style (1–3 short sentences, plain text, one question at a
+time) and hard rules: look bookings up before changing anything, read the new time back and
+get a clear yes before rescheduling or cancelling, always say changes are tentative until the
+owner confirms, and never state anything the tools didn't return. Texts in Spanish get
+answered in Spanish.</p>
+<p>The reply itself doubles as the confirmation message, restating exactly what changed and
+when, in the owner's timezone. Carrier-required keywords (STOP, HELP) are handled by Twilio's
+opt-out machinery upstream of the webhook; the application never needs to see them.</p>
+
+<h2>Owner intake: directed outreach on a private channel</h2>
+<p>The owner has a private line to Elle, a bot channel restricted to a single account, used
+to <em>direct</em> her rather than talk to her as a visitor would. The core flow: message her a
+name, a number, and a topic; she confirms the details, sends that person a
+compliance-complete first-contact SMS from the Twilio number, and records the outreach so
+that when the person texts back, the SMS agent recognizes the thread and its context.</p>
+<div class="codeblock"><div class="src">src/telegram.ts · security model</div><pre>// Security model: the webhook path is unguessable only by convention, so two
+// real gates protect it — Telegram's secret_token header (set at setWebhook
+// time, echoed on every update) and TELEGRAM_OWNER_ID (updates from any other
+// account are dropped). Until the owner id is configured, the bot answers any
+// sender with their numeric id so setup is self-serve, and does nothing else.</pre></div>
+<p>The same channel is Elle's control surface. Each capability is a tool on this bot:</p>
+<div class="tablewrap"><table>
+<tr><th>Ask</th><th>What it reads or does</th></tr>
+<tr><td>"has anyone called?"<br>"who called this week?"</td><td>The call log, over a time window the owner can name. Each call comes back with its local time, the caller's number, how long they stayed on, whether that number has called before, what Elle noted during <em>that</em> call, and any booking it produced.</td></tr>
+<tr><td>"text Jane at +1 555… about the role"</td><td>Sends the compliance-complete first-contact SMS and records the outreach, after confirming the details back.</td></tr>
+<tr><td>"how's the Jane thread going?"</td><td>The outreach ledger: who was texted, whether they replied, bookings on their number.</td></tr>
+<tr><td>"demo mode on" / "back to cascade"</td><td>The <a href="architecture.html">runtime architecture switch</a>, with its own deadline so a demo cannot be left running.</td></tr>
+</table></div>
+<p>Two details in the call report are deliberate. Notes are read <strong>per call</strong>
+rather than per number, because attributing what a previous caller said to whoever rang this
+time is the same shared-phone mistake the <a href="data.html">persona already guards
+against</a>. And an empty result distinguishes "nobody rang" from "this instance has no
+record of it": the call log lives in SQLite on the instance, so when the process has been up
+for less time than the window being asked about, the answer says so instead of reporting a
+quiet day. <code>npm run verify:intake</code> asserts both against a seeded database.</p>
+<p>Conversation state is a short-lived in-memory thread (6-hour TTL, 30-message cap); the
+durable record is the database, not the chat.</p>
+<p>This channel is owner-only by design and never appears in any visitor-facing surface. The
+gates, and what happens when each fails, are detailed on the
+<a href="security.html">security page</a>.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 820 490" width="820" height="490" role="img" aria-label="Owner-directed outreach over the private channel"><defs><marker id="ah-outreach" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="482"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="482"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="482"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="482"/><line class="sdg-life" x1="730" y1="46" x2="730" y2="482"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Owner</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">telegram.ts</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">Twilio SMS</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">Contact</text></g><g class="sdg-actor"><rect x="656" y="8" width="148" height="30" rx="7"/><text x="730" y="27" text-anchor="middle">sms.ts agent</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">&quot;text Jane at +1 555… about the role&quot;</text><g class="sdg-note"><rect x="12" y="106" width="559" height="26" rx="5"/><text x="291" y="123" text-anchor="middle">gate 1: secret_token header · gate 2: owner id; anyone else is dropped silently</text></g><line class="sdg-ret" x1="250" y1="148" x2="94" y2="148" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="170" y="142" text-anchor="middle">confirms name, number, topic</text><line class="sdg-msg" x1="90" y1="182" x2="246" y2="182" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="170" y="176" text-anchor="middle">&quot;yes, send it&quot;</text><line class="sdg-msg" x1="250" y1="216" x2="406" y2="216" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="330" y="210" text-anchor="middle">compliance-complete first-contact SMS</text><path class="sdg-msg" d="M 250 250 h 34 v 18 h -30" fill="none" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="292" y="262" text-anchor="start">outreach row · status = sent</text><line class="sdg-msg" x1="410" y1="294" x2="566" y2="294" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="490" y="288" text-anchor="middle">delivered from the public number</text><line class="sdg-msg" x1="570" y1="328" x2="726" y2="328" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="650" y="322" text-anchor="middle">reply text</text><path class="sdg-msg" d="M 730 362 h 34 v 18 h -30" fill="none" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="772" y="374" text-anchor="start">outreach → replied · thread context injected</text><line class="sdg-ret" x1="730" y1="406" x2="574" y2="406" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="650" y="400" text-anchor="middle">reply that already knows who they are and why</text><line class="sdg-msg" x1="90" y1="440" x2="246" y2="440" marker-end="url(#ah-outreach)"/><text class="sdg-lbl" x="170" y="434" text-anchor="middle">&quot;how’s the Jane thread going?&quot; → status from the ledger</text></svg><figcaption>The owner directs; Elle executes and remembers. When the contact replies, the SMS agent already has the context.</figcaption></figure>
+<h2>One brain, provably</h2>
+<p>The concrete artifact that makes "one brain across channels" real is the shared context
+assembly: every channel builds its prompt from <code>persona.ts</code> (identity, conversation
+template, hard rules) plus per-person facts from <code>db.ts</code> keyed on phone number.
+A person who called yesterday and texts today is recognized, with a carefully worded rule
+that notes about a <em>phone number</em> are never treated as the identity of the person
+currently speaking, because phones get shared. The name a caller goes by must come from the
+current conversation, never from stored notes.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feature index · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Feature index</h1>
+<p class="lead">Every capability in the system, one line each, with a link to where it is
+documented in depth. If it is not on this page, Elle does not do it.</p>
+
+<h2>Voice conversation</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Instant greeting</strong></td><td>Deterministic opening line the moment the call connects; no LLM round-trip, no dead air</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Uninterruptible greeting</strong></td><td>Three coordinated layers guarantee the opening message always plays to the end</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Sentence streaming</strong></td><td>Elle starts speaking the first finished sentence while the rest is still generating; ≈1s to first word</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Barge-in</strong></td><td>Callers interrupt mid-sentence; one turnSeq increment cancels LLM, TTS, and playback together</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Echo suppression</strong></td><td>Elle's own line-echo never registers as caller speech; exact matching mid-call, loose matching during the greeting only</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Utterance merging</strong></td><td>A caller talking in bursts gets one coherent answer, not stacked replies; one LLM call instead of several</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Drift-corrected pacing</strong></td><td>Audio ships to Twilio in exact 20 ms frames on a wall-clock schedule; no stutter, no slur</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Turn-failure recovery</strong></td><td>A provider hiccup gets one fast retry, then a spoken apology in the caller's language; the call never drops</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+<tr><td><strong>Warm TTS sockets</strong></td><td>One WebSocket per voice for the whole call, pre-warmed while the LLM thinks</td><td><a href="voice-pipeline.html">Voice pipeline</a></td></tr>
+</table></div>
+
+<h2>Languages</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Bilingual calls (EN/ES)</strong></td><td>Code-switching STT tags every word; the caller changes language mid-sentence and Elle follows</td><td><a href="languages.html">Bilingual mode</a></td></tr>
+<tr><td><strong>Per-language house voice</strong></td><td>English and Spanish Aura voices, chosen per reply chunk; Spanish socket connects lazily</td><td><a href="languages.html">Bilingual mode</a></td></tr>
+<tr><td><strong>Greeting invite</strong></td><td>The greeting closes with one Spanish sentence, spoken by the Spanish voice</td><td><a href="languages.html">Bilingual mode</a></td></tr>
+<tr><td><strong>Mirror rule</strong></td><td>One persona instruction keeps every reply in exactly the caller's language, on every channel</td><td><a href="languages.html">Bilingual mode</a></td></tr>
+</table></div>
+
+<h2>Knowledge and persona</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Grounded answers</strong></td><td>Everything about the owner comes from the markdown knowledge base; anything absent is 'I don't know'</td><td><a href="data.html">Data and knowledge</a></td></tr>
+<tr><td><strong>BM25 retrieval</strong></td><td>Lexical RAG with no vector database; instant, offline, debuggable by reading</td><td><a href="data.html">Data and knowledge</a></td></tr>
+<tr><td><strong>Inline grounding on the phone</strong></td><td>The whole knowledge base rides the (cached) prompt, removing a retrieval round-trip per turn</td><td><a href="cost.html">Cost engineering</a></td></tr>
+<tr><td><strong>Caller memory</strong></td><td>Per-number facts recalled on the next contact, on any channel</td><td><a href="database.html">Database</a></td></tr>
+<tr><td><strong>Identity hard rule</strong></td><td>Stored notes are never the current speaker's identity; no name until stated in this conversation</td><td><a href="booking.html">Booking</a></td></tr>
+</table></div>
+
+<h2>Booking and SMS</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Tentative booking</strong></td><td>Free/busy-checked calendar holds, explicitly pending until the owner confirms</td><td><a href="booking.html">Booking</a></td></tr>
+<tr><td><strong>Verbal SMS consent</strong></td><td>Full carrier-required consent script spoken on-call; a clear yes triggers the confirmation text and the audit ledger</td><td><a href="booking.html">Booking</a></td></tr>
+<tr><td><strong>Bookings by text</strong></td><td>The SMS agent checks, reschedules, and cancels bookings conversationally</td><td><a href="channels.html">Channels</a></td></tr>
+<tr><td><strong>Owner-directed outreach</strong></td><td>The owner names a person and topic on the private channel; Elle sends a compliant first text and recognizes the reply</td><td><a href="channels.html">Channels</a></td></tr>
+</table></div>
+
+<h2>Web</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Website chat</strong></td><td>Same brain and grounding as the phone, embedded on the owner's site</td><td><a href="channels.html">Channels</a></td></tr>
+<tr><td><strong>Live call pairing</strong></td><td>A spoken code joins a browser: transcripts stream both ways in real time</td><td><a href="channels.html">Channels</a></td></tr>
+<tr><td><strong>Typed input into calls</strong></td><td>Messages typed in the paired browser become spoken turns Elle answers out loud</td><td><a href="channels.html">Channels</a></td></tr>
+<tr><td><strong>On-screen visuals</strong></td><td>show_work puts a live interactive page, a screenshot, or a link card on the paired screen; show_choices puts tappable options there</td><td><a href="channels.html">Channels</a></td></tr>
+</table></div>
+
+<h2 id="tools">Every tool, and who can reach it</h2>
+<p>A tool is a function the model may call mid-conversation. Which set is offered
+depends on the channel, and that is a security boundary as much as a product one:
+the owner-only tools are never offered on a call, so no caller can talk their way
+into them.</p>
+<div class="tbl"><table>
+<tr><th>Tool</th><th>Channel</th><th>What it does</th></tr>
+<tr><td><code>save_user_fact</code></td><td>call, web</td><td>Remembers something about the caller. Also the path a verbal SMS opt-in takes, which records consent and sends the enrollment confirmation.</td></tr>
+<tr><td><code>take_message</code></td><td>call, web</td><td>Records something for the owner when Elle cannot answer it herself.</td></tr>
+<tr><td><code>book_intro_call</code></td><td>call, web, SMS</td><td>Checks free/busy across every configured calendar, writes a tentative hold, and notifies the owner. A slot lock in the database settles two callers racing for one time.</td></tr>
+<tr><td><code>get_my_bookings</code></td><td>SMS</td><td>Lists what this number has booked.</td></tr>
+<tr><td><code>reschedule_booking</code></td><td>SMS</td><td>Moves a booking this number owns.</td></tr>
+<tr><td><code>cancel_booking</code></td><td>SMS</td><td>Cancels a booking this number owns, freeing the slot.</td></tr>
+<tr><td><code>show_work</code></td><td>call, web</td><td>Puts a piece of work on the paired browser. A live page runs in a sandboxed iframe the caller can use; a screenshot renders as an image; a site that refuses embedding becomes a link card.</td></tr>
+<tr><td><code>show_choices</code></td><td>call, web</td><td>Puts a question with tappable options on the paired browser.</td></tr>
+<tr><td><code>end_call</code></td><td>call</td><td>Ends the call when the conversation is genuinely finished.</td></tr>
+<tr><td><code>check_calls</code></td><td><span class="pill">OWNER</span> intake</td><td>Reports who has called recently and what was learned, scoped per call.</td></tr>
+<tr><td><code>check_outreach</code></td><td><span class="pill">OWNER</span> intake</td><td>Shows which outreach messages were sent and which were answered.</td></tr>
+<tr><td><code>send_outreach</code></td><td><span class="pill">OWNER</span> intake</td><td>Sends a first message to a number the owner names.</td></tr>
+<tr><td><code>voice_mode</code></td><td><span class="pill">OWNER</span> intake</td><td>Switches the live voice architecture, with an expiry so a demonstration cannot silently become permanent.</td></tr>
+</table></div>
+
+<h2>Operations and control</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Runtime architecture switch</strong></td><td>The owner flips cascade/demo voice stacks from the private channel; takes effect next call, survives restarts</td><td><a href="architecture.html">Architecture</a></td></tr>
+<tr><td><strong>Prompt caching (3 layers)</strong></td><td>Cross-call static block, per-call conversation breakpoint, turn batching; ~85% off the LLM line</td><td><a href="cost.html">Cost engineering</a></td></tr>
+<tr><td><strong>Owner call report</strong></td><td>"Has anyone called?" on the private intake channel returns each call with duration, repeat-caller history, per-call notes, and any booking</td><td><a href="channels.html">Channels</a></td></tr>
+<tr><td><strong>Live status probes</strong></td><td>/admin/status proves Calendar and the intake bot actually work, not just that they are configured</td><td><a href="operations.html">Operations</a></td></tr>
+<tr><td><strong>Call log with transcripts</strong></td><td>/admin/calls answers 'who called?' without log spelunking</td><td><a href="operations.html">Operations</a></td></tr>
+<tr><td><strong>Token telemetry</strong></td><td>[llm] lines log input/cacheRead/cacheWrite/output per call; caching is verified, not assumed</td><td><a href="cost.html">Cost engineering</a></td></tr>
+<tr><td><strong>Offline verification suites</strong></td><td>Seven fake-backed suites assert the orchestration before any deploy</td><td><a href="reference.html">Code reference</a></td></tr>
+<tr><td><strong>Call recording (off by default)</strong></td><td>App-side stereo WAV + transcript sidecar to GCS; consent-first</td><td><a href="compliance.html">Compliance</a></td></tr>
+</table></div>
+
+<h2>Protection</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>What it does</th><th>Where</th></tr>
+<tr><td><strong>Webhook signatures</strong></td><td>Every Twilio webhook validated; forgeries dropped</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Media-stream token</strong></td><td>The raw audio socket requires a fresh HMAC token minted per call</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>API rate limits</strong></td><td>Per-IP windows on chat and pairing; message length caps</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Repeat-caller tiers</strong></td><td>Normal → limited → blocked by call count; blocked calls never start the paid pipeline</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Silent-call hangup</strong></td><td>A caller who says nothing for 75s (a robocall probe) is disconnected</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Global duration cap</strong></td><td>No call can exceed the ceiling (default 10 min); autodialers cannot run an open-ended bill</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Two-gate owner channel</strong></td><td>Secret header plus owner-id allowlist; everyone else is silently dropped</td><td><a href="security.html">Security</a></td></tr>
+<tr><td><strong>Timing-safe admin</strong></td><td>Owner views 404 without the token; comparison closes the timing channel</td><td><a href="security.html">Security</a></td></tr>
+</table></div>
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

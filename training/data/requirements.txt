@@ -1,0 +1,9 @@
+# Nothing here is required: generate.py, validate.py, serialize.py and the tests
+# use the Python 3.11 standard library only.
+#
+# Optional:
+#   anthropic   - only for expand.py's paraphrase pass (no key = passthrough)
+#   tzdata      - only on systems without an IANA timezone database (e.g. Windows),
+#                 so zoneinfo can resolve America/Los_Angeles
+# anthropic
+# tzdata

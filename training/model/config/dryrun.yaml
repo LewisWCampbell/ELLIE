@@ -1,0 +1,74 @@
+# CPU dry run: same code paths, TinyDuplexLM stand-in, byte tokenizer,
+# placeholder audio codes. Finishes in well under a minute on 4 CPUs.
+extends: base_gpu.yaml
+
+seed: 1234
+run_dir: ../runs/dryrun
+
+data:
+  episodes: ../fixtures/episodes.jsonl      # swapped for the dataset sample when it exists (see README)
+  prepared_dir: ../runs/dryrun/prepared
+  plain_prepared_dir: ../runs/dryrun/plain   # built by run_dryrun.sh (plain.py synth)
+  plain_fraction: 0.3
+
+tokenizer:
+  kind: chunk                  # dry-run word-piece tokenizer, ~SentencePiece density
+  vocab: ../runs/dryrun/prepared/vocab.json
+
+model:
+  backend: tiny
+  card: 64
+
+tiny:
+  card: 64
+  dim: 128
+  layers: 3
+  heads: 4
+  depth_dim: 32
+  depth_layers: 1
+  max_frames: 512
+  pretrain_steps: 300         # simulate a "pretrained" base (no special tokens) before adding them
+  pretrain_lr: 3.0e-3
+
+lora:
+  impl: builtin
+  rank: 16
+  scaling: 2.0
+  target: [q, k, v, o, ff_in, ff_out]
+
+prepare:
+  max_frames: 512
+  audio:
+    mode: placeholder
+    card: 64
+  prompt_text: null
+
+train:
+  backend_device: cpu
+  max_steps: 300
+  batch_size: 4
+  grad_accum: 1
+  seq_frames: 512
+  num_threads: 4
+  optim:
+    lr: 5.0e-3
+    new_token_lr: 2.0e-2
+    weight_decay: 0.0
+    pct_start: 0.1
+  negatives: unlikelihood
+  split: train
+
+loss:
+  first_codebook_weight_multiplier: 2.0
+  audio_weight: 0.25
+
+eval:
+  every_steps: 100
+  split: train                 # dry run overfits; evaluate on what it saw
+  max_episodes: 11
+  ckpt_every_steps: 100
+  keep_checkpoints: 2
+  gen:
+    max_wait_frames: 6
+    temperature_text: 0.0
+    elle_audio: teacher        # placeholder audio is noise: replay it, generate text (see README)

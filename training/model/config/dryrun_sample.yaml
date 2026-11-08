@@ -1,0 +1,41 @@
+# CPU dry run on the dataset agent's sample (training/data/out/sample_*.jsonl).
+# Exercises prepare -> train -> evaluate end to end on real episode shapes
+# (~100 s episodes, ~1250 frames). A few steps only: this checks plumbing,
+# it does not train anything useful.
+extends: dryrun.yaml
+
+run_dir: ../runs/dryrun_sample
+
+data:
+  episodes: ../runs/dryrun_sample/sample_all.jsonl   # train+val+test concatenated by run_dryrun.sh
+  prepared_dir: ../runs/dryrun_sample/prepared
+  plain_prepared_dir: ../runs/dryrun_sample/plain   # built by run_dryrun.sh (plain.py synth)
+  plain_fraction: 0.3
+
+tokenizer:
+  kind: chunk
+  vocab: ../runs/dryrun_sample/prepared/vocab.json
+
+tiny:
+  dim: 64
+  layers: 2
+  max_frames: 2000
+  pretrain_steps: 20
+
+lora:
+  rank: 8
+
+prepare:
+  max_frames: 2000
+
+train:
+  max_steps: 20
+  batch_size: 2
+  seq_frames: 2000
+  split: train
+
+eval:
+  every_steps: 10
+  split: val
+  max_episodes: 4
+  ckpt_every_steps: 10

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code reference · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Code reference</h1>
+<p class="lead">Every source file, what it owns, and how it connects. The codebase is written
+to be read: files carry header comments explaining their role, and non-obvious decisions are
+documented where they live. This atlas is the index; the code is the detail.</p>
+
+<h2>Entry and configuration</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/index.ts</code></td><td>Process entrypoint: one Express app + HTTP server, every channel's routes, the WebSocket upgrade router (<code>/ws</code> pairing, <code>/media</code> call audio), fail-fast credential preflight, session sweeping.</td></tr>
+<tr><td><code>src/config.ts</code></td><td>All configuration, read once from env into one typed object. Every knob documented inline: voice modes, providers, speech tuning, languages, abuse thresholds, booking, recording, admin, intake.</td></tr>
+</table></div>
+
+<h2>The realtime voice path</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/realtime/route.ts</code></td><td>The <code>/voice-realtime</code> webhook: TwiML that opens the media stream, plus minting and verifying the HMAC media token.</td></tr>
+<tr><td><code>src/realtime/twilioBridge.ts</code></td><td>The bridge between Twilio's media WebSocket and whatever voice model is active: the 20 ms drift-corrected pacer, barge-in orchestration (flush + truncate + cancel), the greeting play-to-end gate, per-call prompt assembly (static/dynamic split), tool dispatch, call logging, recording taps.</td></tr>
+<tr><td><code>src/realtime/types.ts</code></td><td>The provider-neutral contract (<code>RealtimeModel</code>, <code>RealtimeFactory</code>, handlers) that makes voice architectures swappable.</td></tr>
+<tr><td><code>src/realtime/geminiLive.ts</code></td><td>Fused speech-to-speech on Vertex AI: Application Default Credentials rather than an API key, inside the GCP BAA. Declares the SDK surface structurally so the adapter is testable offline against a fake session.</td></tr>
+<tr><td><code>src/realtime/audio/g711.ts</code></td><td>The μ-law codec plus the stateful resamplers between Twilio's 8 kHz phone audio and a model that speaks 16/24 kHz PCM. Carries interpolation state and decimation remainders across chunk boundaries.</td></tr>
+<tr><td><code>src/realtime/factory.ts</code></td><td>The <a href="architecture.html">runtime architecture switch</a>: owner override persisted with an optional deadline, env default, resolved per call from the store so overlapping instances agree.</td></tr>
+<tr><td><code>src/realtime/deepgramCascade.ts</code></td><td>The production architecture's turn engine: utterance queue and merge, streaming LLM with sentence emission, per-language TTS sessions and reply-voice selection, echo suppression, the uninterruptible-greeting synthesis lock, turn-failure recovery. Every dependency injectable for offline verification.</td></tr>
+<tr><td><code>src/realtime/deepgram/stt.ts</code></td><td>Streaming STT over Deepgram's WebSocket: μ-law passthrough, VAD + endpointing, intent-gated barge-in, echo filtering hooks, per-word language tags with majority vote per utterance.</td></tr>
+<tr><td><code>src/realtime/deepgram/tts.ts</code></td><td>Streaming Aura TTS: per-call warm sessions (one socket per voice), pre-warming during LLM thinking, cancellation mid-synthesis, and a sessionless fallback path.</td></tr>
+<tr><td><code>src/realtime/openaiRealtime.ts</code></td><td>The fused speech-to-speech implementation of the same contract, the live demonstration of the other end of the fusion spectrum.</td></tr>
+</table></div>
+
+<h2>The turn-based paths</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/ai.ts</code></td><td>The turn engine for text-mediated channels (web chat, cascaded voice): persona + context assembly, the tool loop (RAG search, fact saving, booking, pairing visuals).</td></tr>
+<tr><td><code>src/voice.ts</code></td><td>The original Gather/Say phone path, kept as fallback transport; Twilio signature validation; the abuse gate for this path.</td></tr>
+<tr><td><code>src/web.ts</code></td><td>The public API: chat, resume, profile, pairing; the per-IP rate limiter; the pairing WebSocket with typed-input injection into live calls.</td></tr>
+<tr><td><code>src/webchat.ts</code></td><td>Web-chat session shaping around the turn engine.</td></tr>
+<tr><td><code>src/sms.ts</code></td><td>The SMS agent: booking-management persona and tools, outreach-context injection, the verbal-consent confirmation text.</td></tr>
+<tr><td><code>src/telegram.ts</code></td><td>The owner intake channel: the call-report tool ("has anyone called?"), outreach tools (send, check), the architecture-switch tool, the two-gate security model, short-lived owner thread state.</td></tr>
+</table></div>
+
+<h2>Shared foundations</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/persona.ts</code></td><td>The one persona every channel shares: identity, the adaptive conversation template, grounding rules, the caller-identity hard rule, the consent script requirements, the bilingual mirror rule, per-call context assembly.</td></tr>
+<tr><td><code>src/knowledge.ts</code></td><td>The markdown knowledge base: heading-scoped chunking, the BM25 index, search, the resume-section renderer for the website.</td></tr>
+<tr><td><code>src/db.ts</code></td><td>SQLite: schema (callers, calls, facts, transcripts, bookings, outreach, consent, settings), prepared-statement helpers.</td></tr>
+<tr><td><code>src/sessions.ts</code></td><td>Live call sessions: pairing codes, browser sockets, web-event fan-out, stale sweeping.</td></tr>
+<tr><td><code>src/callerPolicy.ts</code></td><td>Repeat-caller assessment: normal → limited → blocked, with the limited-tier note and duration cap.</td></tr>
+<tr><td><code>src/admin.ts</code></td><td>Owner views: live-probe status page, recent calls with transcripts, bookings; timing-safe token guard.</td></tr>
+</table></div>
+
+<h2>Reasoning providers</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/llm/types.ts</code></td><td>The neutral chat contract: messages, tools, streaming, the static/dynamic system split, the conversation-cache flag.</td></tr>
+<tr><td><code>src/llm/provider.ts</code></td><td>Provider selection from config; the rest of the app imports one <code>provider</code>.</td></tr>
+<tr><td><code>src/llm/anthropic.ts</code></td><td>Claude via the Anthropic API: streaming, tool use, cache-aware system blocks, per-call token logging.</td></tr>
+<tr><td><code>src/llm/anthropicShared.ts</code></td><td>Message conversion shared by the Anthropic and Vertex clients, including the conversation cache breakpoint.</td></tr>
+<tr><td><code>src/llm/vertex.ts</code></td><td>The same models via Google Vertex AI (kept for BAA-covered deployments); auth by Application Default Credentials, no API key.</td></tr>
+<tr><td><code>src/llm/openai.ts</code></td><td>Any OpenAI-compatible endpoint (open models, self-hosted vLLM) behind the same contract.</td></tr>
+</table></div>
+
+<h2>Booking and recording</h2>
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Owns</th></tr>
+<tr><td><code>src/booking/booking.ts</code></td><td>The <code>book_intro_call</code> tool: validation, free/busy, tentative event creation, lead-capture fallback, booking rows.</td></tr>
+<tr><td><code>src/booking/calendar.ts</code></td><td>The Google Calendar client (ADC auth), injectable for tests.</td></tr>
+<tr><td><code>src/recording/recorder.ts</code> · <code>wav.ts</code> · <code>blob.ts</code></td><td>Off-by-default call recording: stereo WAV assembly (caller left, Elle right), GCS upload with JSON sidecar.</td></tr>
+</table></div>
+
+<h2>Verification suites</h2>
+<p>Seven offline suites (<code>*.verify.ts</code>) fake every network dependency and assert
+the real logic: the bridge's barge-in trio, the cascade's streaming/tool/re-framing/bilingual
+behavior, BM25 retrieval, booking outcomes, abuse escalation, and WAV framing. They run in CI
+fashion before any deploy: <code>npm run typecheck &amp;&amp; npm run verify:*</code>.</p>
+
+<h2>Reading order</h2>
+<ol>
+  <li><code>config.ts</code>, every capability announces itself here.</li>
+  <li><code>index.ts</code>, how channels mount.</li>
+  <li><code>realtime/types.ts</code> then <code>twilioBridge.ts</code>, the seam, then the
+  hardest consumer of it.</li>
+  <li><code>deepgramCascade.ts</code>, the heart of the system; the header comment is the
+  map.</li>
+  <li><code>persona.ts</code>, where behavior is actually specified.</li>
+</ol>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

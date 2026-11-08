@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bilingual mode · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Bilingual mode</h1>
+<p class="lead">Elle speaks English and Spanish, and the caller never has to ask. There is no
+menu and no announcement: speak Spanish at any point, even mid-sentence, and Elle follows , 
+new language, new voice, same brain. <code>LANGUAGES=en,es</code> (the default) turns it on;
+<code>LANGUAGES=en</code> restores the original English-only stack, model for model.</p>
+
+<h2>Where each layer changes</h2>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode hot">STT<small>Nova-3 · language=multi<br>code-switching, per-word tags</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode good">LLM<small>no change, Claude is natively multilingual;
+    the persona adds a mirror rule</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode hot">TTS<small>one warm socket per voice:<br>English + Spanish (Aura-2)</small></div>
+  </div>
+  <p class="cap">Detection is the STT's job, mirroring is the persona's, and pronunciation is a
+  per-voice concern. Nothing else in the pipeline knows languages exist.</p>
+</div>
+
+<h2>Detection: per-word tags, majority vote</h2>
+<p>Deepgram's standalone language-detection feature exists only for prerecorded audio. For live
+streams, the primitive is Nova-3's code-switching mode: one stream transcribes both languages
+and tags <em>every word</em> with the language it was spoken in. Each utterance's language is a
+majority vote over those tags, so one borrowed word ("okay", a project name) can't flip the
+call:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgram/stt.ts</div><pre>const multilingual = config.languages.supported.length &gt; 1;
+const params = new URLSearchParams({
+  ...
+  model: multilingual ? config.deepgram.sttMultiModel : config.deepgram.sttModel,
+});
+if (multilingual) params.set("language", "multi");
+
+// at utterance flush: dominant language across the utterance's words
+const tally = new Map&lt;string, number&gt;();
+for (const f of this.finals) {
+  for (const [lang, n] of f.langWords) tally.set(lang, (tally.get(lang) ?? 0) + n);
+}</pre></div>
+<p>The cascade follows the caller: an utterance tagged with a different supported language
+switches the working language, visible in the logs as
+<code>[voice] caller language: en -&gt; es</code>.</p>
+
+<h2>Two voices, one warm socket each</h2>
+<p>A TTS voice is fixed per WebSocket, so bilingual calls hold one session per voice, English
+(<code>aura-2-thalia-en</code>) and Spanish (<code>aura-2-celeste-es</code>, configurable via
+<code>DEEPGRAM_TTS_MODEL_ES</code>). The Spanish socket connects lazily on first use, so
+English-only calls pay nothing:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts</div><pre>private sessionFor(lang: string): TtsSession | null {
+  if (!this.tts.openSession) return null;
+  let session = this.ttsSessions.get(lang);
+  if (!session) {
+    session = this.tts.openSession(this.ttsModelFor(lang));
+    this.ttsSessions.set(lang, session);
+  }
+  return session;
+}</pre></div>
+
+<h2>Which voice speaks a reply</h2>
+<p>The caller's detected language is the default, but the <em>reply</em> can legitimately be
+in the other language ("do you speak Spanish?" asked in English deserves a Spanish answer). So
+each reply chunk gets a lightweight text scan: inverted punctuation, accented vowels, and the
+most common Spanish function words, none of which appear in normal English prose. Clear signal
+overrides; ambiguity sticks with the caller's language:</p>
+<div class="codeblock"><div class="src">src/realtime/deepgramCascade.ts</div><pre>private replyLang(text: string): string {
+  if (!spanishEnabled()) return "en";
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const hits = (text.match(ES_HINT) ?? []).length;
+  if (hits &gt;= 2 &amp;&amp; hits &gt;= words * 0.2) return "es";
+  if (hits === 0 &amp;&amp; words &gt;= 4) return "en";
+  return this.lang;  // ambiguous: stick with the caller's language
+}</pre></div>
+
+<h2>The greeting's Spanish beat</h2>
+<p>The greeting stays English, but in bilingual mode it closes with one Spanish sentence , 
+<em>"Y si prefieres hablar en español, solo dímelo."</em>, spoken by the Spanish voice
+(the English voice would mangle the pronunciation). Spanish-only callers hear, in their own
+language, that they can switch. The sentence is part of the
+<a href="voice-pipeline.html">uninterruptible greeting</a>, and it's quoted in the greeting
+note fed to the model, so Elle never awkwardly re-offers Spanish on her first turn.</p>
+
+<h2>The persona's mirror rule</h2>
+<p>The LLM needs no per-language configuration, just an instruction, shared by phone, web, and
+SMS: reply entirely in the language the person is using; switch when they switch; never mix
+languages in one reply unless they do. Keeping each reply in exactly one language is also what
+makes the per-chunk voice choice coherent.</p>
+
+<h2>Details that only matter because they'd break</h2>
+<ul>
+  <li><strong>Echo suppression survives accents.</strong> The echo normalizer uses Unicode
+  letter classes (<code>\p{L}</code>) instead of <code>[a-z0-9]</code>, the ASCII version
+  shreds "dímelo" into "d melo" and quietly breaks echo matching on Spanish calls.</li>
+  <li><strong>Errors apologize in the caller's language.</strong> The turn-failure fallback
+  line has an English and a Spanish variant, chosen by the current call language.</li>
+  <li><strong>Compliance is per-language.</strong> The persona requires the SMS consent flow to
+  cover every element in the caller's language. For regulated deployments, approved scripts
+  should be stored pre-translated and delivered verbatim, never machine-translated mid-call.
+  The cascade's text bottleneck is exactly what makes that guarantee enforceable.</li>
+</ul>
+
+<h2>Extending beyond Spanish</h2>
+<p>Nova-3's multi mode already hears about ten languages; the gate is the voice map, since
+Aura's catalog covers English and Spanish. Adding French or German means one new entry in
+<code>LANGUAGES</code>, plus a voice from a second TTS provider wired behind the same
+<code>Tts</code> interface, a seam the code was shaped for from the start. An utterance in an
+<em>unsupported</em> language currently continues in the call's working language; a graceful
+"I speak English and Spanish" fallback is a planned refinement.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

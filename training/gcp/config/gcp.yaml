@@ -1,0 +1,18 @@
+# The real run, with every path under ELLE_WORK on the VM's data disk.
+extends: ../../model/config/base_gpu.yaml
+
+run_dir: ${ELLE_WORK}/runs/elle_tools_v1
+
+data:
+  episodes: ${ELLE_WORK}/data/episodes.jsonl
+  prepared_dir: ${ELLE_WORK}/runs/prepared_v1
+  # Tool-free conversation mixed into every batch so plain talk doesn't decay.
+  # Built by `prepare.sh mimi`; must exist before training starts.
+  plain_prepared_dir: ${ELLE_WORK}/runs/plain_v1
+
+eval:
+  listen: 5                           # save 5 of Elle's generated replies as WAV for listening
+
+prepare:
+  audio:
+    audio_dir: ${ELLE_WORK}/audio

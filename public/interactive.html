@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interactive resume</title>
+  <style>
+    :root {
+      --bg:#0f1220; --panel:#171b2e; --panel2:#10142a; --ink:#eef0fa; --soft:#9aa1c0;
+      --line:#2a3150; --accent:#6ea8fe; --accent2:#9ef0c0;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg:#f5f7fb; --panel:#ffffff; --panel2:#eef1f8; --ink:#1a2030; --soft:#5a6280;
+        --line:#dde3f0; --accent:#2563eb; --accent2:#0e9f6e;
+      }
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height:1.55; }
+    header.hero { max-width:1100px; margin:0 auto; padding:2rem 1.25rem 1rem; }
+    header.hero h1 { margin:0; font-size:1.9rem; letter-spacing:-0.02em; }
+    header.hero p { margin:0.3rem 0 0; color:var(--soft); }
+    header.hero .nav { margin-top:0.75rem; font-size:0.9rem; }
+    header.hero .nav a { color:var(--accent); text-decoration:none; margin-right:1rem; }
+    .layout { max-width:1100px; margin:0 auto; padding:1rem 1.25rem 4rem;
+      display:grid; grid-template-columns: 1.15fr 0.85fr; gap:1.5rem; align-items:start; }
+    @media (max-width:860px) { .layout { grid-template-columns:1fr; } .chat-panel { position:static; } }
+    .section { margin-bottom:1.75rem; }
+    .section h2 { font-size:0.78rem; letter-spacing:0.12em; text-transform:uppercase;
+      color:var(--accent); margin:0 0 0.75rem; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+      padding:0.9rem 1.1rem; margin-bottom:0.75rem; }
+    .card h3 { margin:0 0 0.35rem; font-size:1.02rem; }
+    .card p { margin:0; color:var(--soft); font-size:0.94rem; }
+    .card .ask { margin-top:0.6rem; }
+    .card .ask button { background:none; border:1px solid var(--line); color:var(--accent);
+      border-radius:8px; padding:0.25rem 0.6rem; font-size:0.8rem; cursor:pointer; }
+    .chips { display:flex; flex-wrap:wrap; gap:0.4rem; }
+    .chip { background:var(--panel2); border:1px solid var(--line); border-radius:999px;
+      padding:0.25rem 0.7rem; font-size:0.85rem; color:var(--ink); }
+    .chat-panel { position:sticky; top:1rem; background:var(--panel); border:1px solid var(--line);
+      border-radius:14px; display:flex; flex-direction:column; overflow:hidden; }
+    .chat-head { padding:0.9rem 1rem; border-bottom:1px solid var(--line); }
+    .chat-head strong { display:block; }
+    .chat-head span { color:var(--soft); font-size:0.85rem; }
+    .chat { display:flex; flex-direction:column; gap:0.55rem; padding:1rem; height:44vh; overflow-y:auto; }
+    .bubble { padding:0.55rem 0.8rem; border-radius:12px; max-width:88%; font-size:0.95rem; }
+    .bubble.user { align-self:flex-end; background:var(--accent); color:#08122b; }
+    .bubble.bot { align-self:flex-start; background:var(--panel2); }
+    .bubble .src { display:block; margin-top:0.3rem; font-size:0.72rem; color:var(--soft); }
+    .suggested { display:flex; flex-wrap:wrap; gap:0.4rem; padding:0 1rem 0.6rem; }
+    .suggested button { background:var(--panel2); border:1px solid var(--line); color:var(--ink);
+      border-radius:999px; padding:0.25rem 0.65rem; font-size:0.82rem; cursor:pointer; }
+    .composer { display:flex; gap:0.5rem; padding:0.75rem 1rem 1rem; border-top:1px solid var(--line); }
+    .composer input { flex:1; padding:0.55rem 0.75rem; border-radius:10px; border:1px solid var(--line);
+      background:var(--panel2); color:var(--ink); font-size:0.95rem; }
+    .composer button { background:var(--accent); color:#08122b; border:none; border-radius:10px;
+      padding:0 1rem; font-weight:600; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1 id="name">Interactive resume</h1>
+    <p id="tagline">Explore my work — or ask my assistant anything.</p>
+    <div class="nav">
+      <a href="/cv.html">Traditional resume →</a>
+      <a href="#" id="callhint">Or call and pair this screen</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div id="resume"></div>
+
+    <aside class="chat-panel">
+      <div class="chat-head">
+        <strong id="chat-title">Chat with my assistant</strong>
+        <span id="chat-sub">Grounded in my real resume — ask about experience, projects, or skills.</span>
+      </div>
+      <div class="chat" id="chat"></div>
+      <div class="suggested" id="suggested">
+        <button data-q="What's your experience with cloud infrastructure?">Cloud experience</button>
+        <button data-q="Tell me about your most interesting project.">Best project</button>
+        <button data-q="What are you looking for next?">What you want next</button>
+      </div>
+      <form class="composer" id="composer" autocomplete="off">
+        <input id="input" placeholder="Ask a question…" aria-label="Ask a question" />
+        <button type="submit">Send</button>
+      </form>
+    </aside>
+  </div>
+
+  <script>
+    const history = [];
+    let ASSISTANT = "my assistant";
+
+    async function load() {
+      const [profile, resume] = await Promise.all([
+        fetch("/api/profile").then((r) => r.json()).catch(() => ({})),
+        fetch("/api/resume").then((r) => r.json()).catch(() => ({ sections: [] })),
+      ]);
+      const owner = profile.ownerName && profile.ownerName !== "the owner" ? profile.ownerName : null;
+      ASSISTANT = profile.assistantName || "my assistant";
+      if (owner) {
+        document.getElementById("name").textContent = owner;
+        document.title = owner + " — Interactive resume";
+      }
+      document.getElementById("chat-title").textContent = "Chat with " + ASSISTANT;
+      document.getElementById("chat-sub").textContent =
+        (owner ? owner + "'s" : "My") + " outreach assistant — grounded in the real resume.";
+      renderResume(resume.sections || []);
+      greet(owner);
+    }
+
+    function renderResume(sections) {
+      const root = document.getElementById("resume");
+      for (const section of sections) {
+        const wrap = document.createElement("section");
+        wrap.className = "section";
+        const h2 = document.createElement("h2");
+        h2.textContent = section.title;
+        wrap.appendChild(h2);
+
+        const isSkills = /skill/i.test(section.title);
+        if (isSkills) {
+          const chips = document.createElement("div");
+          chips.className = "chips";
+          for (const item of section.items) {
+            const chip = document.createElement("span");
+            chip.className = "chip";
+            chip.textContent = item.heading;
+            chip.title = item.text;
+            chips.appendChild(chip);
+          }
+          wrap.appendChild(chips);
+        } else {
+          for (const item of section.items) {
+            const card = document.createElement("div");
+            card.className = "card";
+            const h3 = document.createElement("h3");
+            h3.textContent = item.heading;
+            const p = document.createElement("p");
+            p.textContent = item.text;
+            const ask = document.createElement("div");
+            ask.className = "ask";
+            const btn = document.createElement("button");
+            btn.textContent = "Ask about this";
+            btn.addEventListener("click", () => sendMessage("Tell me more about: " + item.heading));
+            ask.appendChild(btn);
+            card.append(h3, p, ask);
+            wrap.appendChild(card);
+          }
+        }
+        root.appendChild(wrap);
+      }
+    }
+
+    function greet(owner) {
+      bubble("bot", `Hi! I'm ${ASSISTANT}, ${owner ? owner + "'s" : "the"} outreach assistant. ` +
+        `Ask me anything about ${owner || "their"} experience, projects, or skills — or click a card to dig in.`);
+    }
+
+    function bubble(role, text) {
+      const el = document.createElement("div");
+      el.className = "bubble " + (role === "user" ? "user" : "bot");
+      el.textContent = text;
+      document.getElementById("chat").appendChild(el);
+      const c = document.getElementById("chat");
+      c.scrollTop = c.scrollHeight;
+      return el;
+    }
+
+    async function sendMessage(message) {
+      bubble("user", message);
+      history.push({ role: "user", text: message });
+      const thinking = bubble("bot", "…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: history.slice(0, -1) }),
+        });
+        const data = await res.json();
+        thinking.textContent = data.reply || data.error || "Sorry, something went wrong.";
+        if (data.sources && data.sources.length) {
+          const s = document.createElement("span");
+          s.className = "src";
+          s.textContent = "Sources: " + data.sources.map((x) => x.heading).join(" · ");
+          thinking.appendChild(s);
+        }
+        if (data.reply) history.push({ role: "assistant", text: data.reply });
+      } catch {
+        thinking.textContent = "Couldn't reach the assistant. Try again.";
+      }
+    }
+
+    document.getElementById("composer").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("input");
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = "";
+      sendMessage(q);
+    });
+    document.getElementById("suggested").addEventListener("click", (e) => {
+      const q = e.target.getAttribute("data-q");
+      if (q) sendMessage(q);
+    });
+    document.getElementById("callhint").addEventListener("click", (e) => {
+      e.preventDefault();
+      alert("Call the number, and " + ASSISTANT + " will give you a pairing code. Enter it on the home page to pair this screen with your call.");
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ask my AI about me</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .chat-wrap { max-width: 720px; margin: 0 auto; }
+    .chat { display: flex; flex-direction: column; gap: 0.6rem; max-height: 60vh; overflow-y: auto; margin-bottom: 1rem; }
+    .bubble { padding: 0.6rem 0.85rem; border-radius: 12px; max-width: 85%; }
+    .bubble.user { align-self: flex-end; background: var(--accent); color: #0b1020; }
+    .bubble.bot { align-self: flex-start; background: #10142a; }
+    .sources { font-size: 0.78rem; color: var(--muted); margin-top: 0.3rem; }
+    .composer { display: flex; gap: 0.5rem; }
+    .composer input { flex: 1; padding: 0.6rem 0.8rem; border-radius: 10px; border: 1px solid #333a5e; background: #10142a; color: var(--text); font-size: 1rem; }
+    .suggested { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+    .suggested button { background: #1a1e33; color: var(--text); border: 1px solid #333a5e; font-weight: 400; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <main class="chat-wrap">
+    <header>
+      <h1>Ask my <span>AI</span></h1>
+      <p class="tagline">Interview me by chat — or call the number and pair this screen.</p>
+    </header>
+
+    <div class="suggested" id="suggested">
+      <button data-q="What's your experience with cloud infrastructure?">Cloud experience</button>
+      <button data-q="Tell me about your most interesting project.">Interesting project</button>
+      <button data-q="What programming languages do you know best?">Languages</button>
+      <button data-q="How do you like to work?">Ways of working</button>
+    </div>
+
+    <div class="chat card" id="chat"></div>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <input id="input" placeholder="Ask about my experience, projects, skills…" aria-label="Your question" />
+      <button type="submit">Send</button>
+    </form>
+  </main>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("composer");
+    const input = document.getElementById("input");
+    const history = [];
+
+    function bubble(role, text) {
+      const el = document.createElement("div");
+      el.className = `bubble ${role === "user" ? "user" : "bot"}`;
+      el.textContent = text;
+      chat.appendChild(el);
+      chat.scrollTop = chat.scrollHeight;
+      return el;
+    }
+
+    async function ask(message) {
+      bubble("user", message);
+      history.push({ role: "user", text: message });
+      const thinking = bubble("bot", "…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: history.slice(0, -1) }),
+        });
+        const data = await res.json();
+        thinking.textContent = data.reply || data.error || "Sorry, something went wrong.";
+        if (data.sources && data.sources.length) {
+          const s = document.createElement("div");
+          s.className = "sources";
+          s.textContent = "Sources: " + data.sources.map((x) => x.heading).join(" · ");
+          thinking.appendChild(s);
+        }
+        if (data.reply) history.push({ role: "assistant", text: data.reply });
+      } catch {
+        thinking.textContent = "Couldn't reach the assistant. Try again.";
+      }
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = "";
+      ask(q);
+    });
+    document.getElementById("suggested").addEventListener("click", (e) => {
+      const q = e.target.getAttribute("data-q");
+      if (q) ask(q);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Architecture</h1>
+<p class="lead">Elle is an <strong>advanced cascade</strong>: separate best-of-breed components
+for hearing, thinking, and speaking, joined by orchestration code that makes them feel like one
+mind. This page explains that shape, the theory behind it, and the seam that lets whole
+architectures be swapped at runtime.</p>
+
+<h2>The four layers of a voice agent</h2>
+<p>Any phone-capable AI decomposes into four jobs, whether or not a product exposes them:</p>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">1 · STT<small>ears, audio in, words out</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">2 · Interaction<small>judgment, turn-taking, barge-in, backchannels</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">3 · Inference<small>brain, reasoning, tools, knowledge</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">4 · TTS<small>mouth, words in, audio out</small></div>
+  </div>
+  <p class="cap">The four-layer model. Architectures differ in which layers are fused into one
+  model and which stay separate components.</p>
+</div>
+<p>The design space is which of these get <em>fused</em>. Fuse everything and you have a pure
+speech-to-speech model (natural, but you lose text-level control). Keep everything separate and
+you have a classic cascade (controllable, but turn-taking runs on silence timers). Elle today
+is the second, with the timer problem engineered down to imperceptibility; the roadmap
+(below) moves her toward fusing layers 1+2 while deliberately keeping 3 and 4 separate.</p>
+
+<p><strong>Layer two is the contested one, and it is not optional.</strong> Thinking Machines
+calls the turn-based stack a stopgap and argues interactivity belongs inside the architecture
+rather than in a harness bolted around
+it<sup class="cite"><a href="https://thinkingmachines.ai/blog/interaction-models/" rel="noopener noreferrer" target="_blank">1</a></sup>;
+OpenAI removed the turn detector from GPT-Live's audio path entirely and escalates reasoning
+asynchronously so it never blocks the voice
+loop<sup class="cite"><a href="https://openai.com/index/continuous-voice-interaction-with-gpt-live/" rel="noopener noreferrer" target="_blank">2</a></sup>;
+ElevenLabs frames it as the reason voice agents break in production, unable to survive
+interruption, silence, or context carried across turns, and describes reaching for it through
+an advanced cascade with in-house speech
+components<sup class="cite"><a href="https://elevenlabs.io/blog/interaction-models" rel="noopener noreferrer" target="_blank">3</a></sup>;
+an independent engineering read of the same release lands in the same
+place<sup class="cite"><a href="https://www.seangoedecke.com/interaction-models/" rel="noopener noreferrer" target="_blank">4</a></sup>.
+The disagreement across those four is about <em>where</em> layer two lives, fused into a model
+or written as orchestration, never about whether it has to exist. Elle writes it: the barge-in
+gate, echo suppression, the pacer, and turn-sequence cancellation in
+<a href="voice-pipeline.html">the voice pipeline</a> are layer two in code. Full citations are
+in <a href="index.html#ref1">the introduction</a>.</p>
+
+<h2>Why a cascade, concretely</h2>
+<p>Every word Elle speaks passes through a <strong>text bottleneck</strong>: the reply exists as
+text she controls before any audio is made. That single property yields most of what matters in
+a professional deployment:</p>
+<ul>
+  <li><strong>Verbatim delivery.</strong> Compliance wording (the SMS consent flow, for
+  example) is spoken exactly as written. A fused voice model paraphrases; a cascade cannot.</li>
+  <li><strong>A house voice.</strong> The voice is a swappable component, not a property of the
+  brain. Elle's English voice, and her Spanish voice, are one config line each.</li>
+  <li><strong>Inspectability.</strong> Every turn is text in the logs and the database:
+  transcripts, tool calls, token counts. Debugging a voice bug never requires listening.</li>
+  <li><strong>Model freedom.</strong> The brain is any text LLM behind a provider interface;
+  swapping it is an environment variable, not a migration.</li>
+</ul>
+
+<h2>The provider seam</h2>
+<p>The Twilio bridge does not know which voice architecture it is driving. It depends on a
+provider-neutral contract, and everything, barge-in handling, tool calls, web pairing , 
+works against that interface:</p>
+<div class="codeblock"><div class="src">src/realtime/types.ts</div><pre>export interface RealtimeModel {
+  readonly currentItemId: string | null;
+  appendAudio(base64ulaw: string): void;
+  sendText?(text: string): void;      // typed input from a paired browser
+  cancelResponse(): void;             // barge-in
+  truncate(itemId: string, audioEndMs: number): void;
+  sendFunctionResult(callId: string, output: string): void;
+  greet?(text: string): void;         // speak before the caller says anything
+  close(): void;
+}
+
+export type RealtimeFactory = (
+  config: RealtimeSessionConfig,
+  handlers: RealtimeHandlers
+) =&gt; RealtimeModel;</pre></div>
+<p>Three implementations exist today: <code>deepgramCascade.ts</code> (the production
+architecture: Deepgram STT → Claude → Deepgram Aura TTS), <code>geminiLive.ts</code>
+(a fused speech-to-speech model on Vertex AI), and <code>openaiRealtime.ts</code>
+(the same class of model on OpenAI). The fused pair are live demonstrations of the other end
+of the spectrum, switchable per call.</p>
+<p>The two fused options are not interchangeable in the way that matters operationally.
+<strong>Gemini Live authenticates with Application Default Credentials</strong>, so on Cloud
+Run it is the service account that is already attached: there is no key to mint, store,
+rotate, or leak, and the calls fall under the same GCP BAA as the compute and Secret Manager.
+The OpenAI path needs its own credential and its own agreement. That difference, not model
+quality, is why the Vertex one is the default way to show this architecture off.</p>
+<p>It costs something. Twilio, Deepgram, and the OpenAI Realtime API all speak G.711 μ-law at
+8 kHz, so those paths are a passthrough. Gemini Live speaks linear PCM, 16 kHz in and 24 kHz
+out, so caller audio is decoded and upsampled on the way in and the model's audio decimated
+3:1 on the way out. Both ratios are integers, which keeps it exact; the conversion is
+stateful because chunk boundaries are arbitrary, and carrying interpolation state and
+decimation remainders across chunks is the whole game. Get it wrong and you get a tick at
+exactly the frame rate, twenty times a second, which is a miserable thing to diagnose from a
+phone call. <code>npm run verify:audio</code> asserts the chunk-boundary behaviour offline,
+and <code>npm run verify:gemini</code> drives the adapter through a fake session to cover
+audio both ways, barge-in, transcripts, tools, the greeting gate, and the close race.</p>
+
+<h2>The runtime architecture switch</h2>
+<p>The active implementation is chosen <em>per call</em>, not at boot. A small persisted
+setting overrides the environment default, and the media WebSocket resolves the factory when
+each call connects:</p>
+<div class="codeblock"><div class="src">src/realtime/factory.ts · src/index.ts</div><pre>// factory.ts — owner-set override, persisted with an optional deadline
+export function setVoiceProvider(p: VoiceProvider | null, ttlMinutes?: number): void { ... }
+export function currentRealtimeFactory(): RealtimeFactory { ... }
+
+// index.ts — resolved per connection, so a switch applies to the NEXT call
+const mediaWss = createMediaWss(currentRealtimeFactory);</pre></div>
+<p>The owner flips it conversationally from the private intake channel ("demo mode on",
+"back to cascade"); the switch refuses the fused mode when its credentials are absent, so a
+toggle can never strand a caller. The admin status page always names the active architecture.</p>
+<p>Two properties of that override are worth stating, because both were bugs waiting to
+happen:</p>
+<ul>
+  <li><strong>The demo switch has a deadline.</strong> The fused architecture costs roughly
+  five to ten times as much per minute, and the realistic failure is not a bad switch, it is a
+  switch nobody remembers to undo: the demo ends, the phone keeps answering on the expensive
+  brain, and the bill arrives a month later. A demo switch therefore defaults to reverting on
+  its own after thirty minutes. The deadline is enforced when the provider is <em>read</em>
+  rather than by a timer, so it outlives the process that set it.</li>
+  <li><strong>The override is never cached in memory.</strong> Cloud Run can be running more
+  than one instance, and a revision rollover overlaps them deliberately. An in-memory copy
+  would mean the instance that did not handle the switch keeps answering on the old
+  architecture until it recycles, so the settings store is read once per call instead. It is a
+  local SQLite read, measured in microseconds, against a decision made once per call rather
+  than per audio frame.</li>
+</ul>
+<p><code>npm run verify:factory</code> asserts both offline, along with the deadline surviving
+a recycle and the revert being persisted rather than merely forgotten.</p>
+
+<h2>The escalation roadmap: fuse 1+2, keep 3+4</h2>
+<p>The cascade's one native weakness is that turn-taking decisions are made from silence
+timers rather than from the sound of the caller's voice. The engineered mitigations
+(<a href="voice-pipeline.html">documented here</a>) get within a few hundred milliseconds of
+natural; a <em>fused listener</em> closes the rest. The target architecture, designed for
+call-center-scale deployments:</p>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Caller audio</div>
+    <span class="darrow">→</span>
+    <div class="dnode hot">Duplex talker<small>layers 1+2 fused: hears, decides turns,
+    handles the routine 80% of turns</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">House TTS<small>layer 4, unchanged</small></div>
+  </div>
+  <div class="drow">
+    <span class="dlabel">escalates hard turns via a tool call ↓ &nbsp; · &nbsp; brain streams
+    sentences straight back to TTS while still generating</span>
+  </div>
+  <div class="drow">
+    <div class="dnode good">Inference brain<small>layer 3: text LLM with tools, knowledge,
+    compliance scripts</small></div>
+  </div>
+  <p class="cap">The "director" variant: audio-native turn-taking up front, text-mediated brain
+  and house voice behind. Streaming from brain to mouth is preserved, so escalated turns still
+  produce first audio in about a second.</p>
+</div>
+<p>Why this boundary and not more fusion: pulling TTS into the fused model loses the house
+voice and verbatim delivery; pulling inference in loses tool reliability and the cost tiering
+(a cheap talker for most turns, the full brain only when needed). Fusing exactly the seam that
+timers handle badly, and keeping the seams that give control, is the optimum for a
+customer-service experience. The economics of when this pencils, by call volume, are on the
+<a href="cost.html">cost page</a>.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 660 402" width="660" height="402" role="img" aria-label="Roadmap: the director escalation (fuse layers 1+2)"><defs><marker id="ah-escalate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="394"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="394"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="394"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="394"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Caller</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">Duplex talker</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">Inference brain</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">House TTS</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">audio: the talker hears AND judges turns natively</text><line class="sdg-ret" x1="250" y1="108" x2="94" y2="108" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="170" y="102" text-anchor="middle">routine turn: answered directly via house TTS</text><line class="sdg-msg" x1="90" y1="142" x2="246" y2="142" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="170" y="136" text-anchor="middle">hard question (pricing, policy, tool work)</text><line class="sdg-msg" x1="250" y1="176" x2="406" y2="176" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="330" y="170" text-anchor="middle">ask_brain(question), a tool call not a transfer</text><line class="sdg-msg" x1="250" y1="210" x2="566" y2="210" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="410" y="204" text-anchor="middle">pre-synthesized backchannel: “let me check that”</text><line class="sdg-msg" x1="410" y1="244" x2="566" y2="244" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="490" y="238" text-anchor="middle">sentence 1 streamed while still generating</text><line class="sdg-msg" x1="570" y1="278" x2="94" y2="278" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="330" y="272" text-anchor="middle">first audio ≈ 1 s, same house voice</text><line class="sdg-ret" x1="410" y1="312" x2="254" y2="312" marker-end="url(#ah-escalate)"/><text class="sdg-lbl" x="330" y="306" text-anchor="middle">spoken text fed back as the talker&#x27;s context</text><g class="sdg-note"><rect x="82" y="344" width="566" height="26" rx="5"/><text x="365" y="361" text-anchor="middle">text bottleneck preserved: verbatim compliance wording + swappable voice survive</text></g></svg><figcaption>The future architecture keeps inference and TTS separate on purpose: cost tiering, tool reliability, and verbatim delivery all live at that seam.</figcaption></figure>
+<h2>Channels share one brain</h2>
+<p>Everything above concerns the phone. The other channels reuse the same foundations through
+thinner pipelines:</p>
+<div class="tablewrap"><table>
+<tr><th>Channel</th><th>Transport</th><th>Turn engine</th></tr>
+<tr><td>Realtime phone</td><td>Twilio Media Streams ↔ <code>/media</code> WebSocket</td>
+    <td><code>deepgramCascade.ts</code> (its own streaming turn loop)</td></tr>
+<tr><td>Cascaded phone (fallback)</td><td>Twilio <code>&lt;Gather&gt;</code>/<code>&lt;Say&gt;</code> webhooks</td>
+    <td><code>ai.ts · runTurn()</code></td></tr>
+<tr><td>Website chat</td><td><code>POST /api/chat</code></td><td><code>ai.ts · runTurn()</code></td></tr>
+<tr><td>SMS</td><td>Twilio SMS webhook <code>/sms</code></td><td><code>sms.ts</code> (booking-focused tool loop)</td></tr>
+<tr><td>Owner intake</td><td>Private bot webhook <code>/telegram</code>, owner-only</td><td><code>telegram.ts</code> (outreach tools)</td></tr>
+</table></div>
+<p>All five sit on the same persona (<code>persona.ts</code>), knowledge base
+(<code>knowledge.ts</code>), booking tools (<code>booking/</code>), and memory
+(<code>db.ts</code>), which is what lets a relationship span channels: a call books a
+meeting, a text reschedules it, the owner sees it all.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

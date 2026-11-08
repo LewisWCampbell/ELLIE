@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compliance and BAAs · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Compliance and BAAs</h1>
+<p class="lead">The architecture was designed so a regulated deployment (healthcare being the
+obvious call-center vertical) is a configuration change, not a rebuild. This page documents
+that path: which vendor covers what, the one-env-var LLM switch that keeps model traffic
+inside a single agreement, and the honest gap list a regulated deployment must still close.</p>
+
+<div class="note warn"><strong>Framing, stated plainly:</strong> this is engineering
+documentation, not legal advice, and it describes what the architecture <em>supports</em>.
+Elle as deployed is a portfolio assistant: she handles no PHI, no BAAs are signed, and none
+need to be. The point of this page is that when a deployment does need them, the seams are
+already in the right places.</div>
+
+<h2>The BAA chain, vendor by vendor</h2>
+<p>A BAA covers PHI only when three things are true at once: the agreement is signed, the
+<em>specific service</em> is on that vendor's covered list, and it is used per their
+configuration rules. Miss any one and the data sits outside the agreement. Component by
+component:</p>
+<div class="tablewrap"><table>
+<tr><th>Layer</th><th>Provider</th><th>Coverage mechanism</th></tr>
+<tr><td>Compute, secrets, storage, logs</td><td>GCP (Cloud Run, Secret Manager, GCS, Logging)</td>
+<td>All under the one GCP BAA the project owner accepts.</td></tr>
+<tr><td>LLM</td><td>Claude via <strong>Vertex AI</strong></td>
+<td>The keystone: <code>LLM_PROVIDER=vertex</code> routes the same Claude models through a
+Google Cloud service, so model traffic falls under the <em>same GCP BAA</em> as the compute.
+No separate model-vendor agreement, one security perimeter. Auth is service-account ADC, so
+no API key exists to leak.</td></tr>
+<tr><td>Speech (STT + TTS)</td><td>Deepgram</td>
+<td>Deepgram signs BAAs; one agreement covers both the streaming STT and Aura TTS legs.</td></tr>
+<tr><td>Telephony</td><td>Twilio</td>
+<td>Twilio publishes HIPAA-eligible services; a regulated deployment must confirm Voice and
+Media Streams are on the covered list under its BAA. Plain SMS is not a PHI channel and the
+design never requires it to be: texts here are scheduling logistics.</td></tr>
+<tr><td>Demo mode (fused voice)</td><td>OpenAI Realtime</td>
+<td>Requires OpenAI's BAA (requested via baa@openai.com) plus a zero-data-retention
+configuration before any PHI. Absent that, demo mode stays a non-PHI showpiece; the runtime
+switch makes that a policy you can actually enforce.</td></tr>
+</table></div>
+
+<h2>The perimeter, drawn</h2>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode good">GCP BAA perimeter<small>Cloud Run · Secret Manager · GCS ·
+    Logging · <strong>Vertex AI (Claude)</strong>: one agreement covers all of it</small></div>
+  </div>
+  <div class="drow"><span class="darrow">↕ &nbsp; covered traffic only</span></div>
+  <div class="drow">
+    <div class="dnode hot">Deepgram<small>own BAA · STT + TTS</small></div>
+    <div class="dnode hot">Twilio<small>own BAA · HIPAA-eligible voice services</small></div>
+    <div class="dnode warn">OpenAI Realtime<small>demo mode: BAA + ZDR required,<br>else no PHI ever</small></div>
+  </div>
+  <p class="cap">Three agreements total for a regulated cascade deployment: GCP, Deepgram,
+  Twilio. The Vertex switch is what keeps the count at three instead of four.</p>
+</div>
+
+<h2>Why the Vertex switch is the interesting part</h2>
+<p>The direct Anthropic API endpoint and the Vertex endpoint serve the same models through
+the same shared message transforms (<code>src/llm/anthropicShared.ts</code>), so behavior is
+identical; only the client and auth differ, and <code>npm run verify:vertex</code> proves the
+wiring offline. What changes is jurisdictional: a consumer endpoint is not on any covered
+list, while Vertex is a Google Cloud service inside the agreement you already signed for the
+compute. Same brain, different legal perimeter, one environment variable:</p>
+<div class="codeblock"><div class="src">.env · the whole switch</div><pre>LLM_PROVIDER=vertex
+VERTEX_PROJECT_ID=&lt;your project&gt;
+VERTEX_REGION=us-east5
+VERTEX_MODEL=&lt;exact Model Garden id for that region&gt;</pre></div>
+
+<h2>Recording: compliant by construction, off by default</h2>
+<p>Call recording (<code>src/recording/</code>) was built app-side deliberately: the audio
+already flows through the bridge, so recordings are assembled in-process and uploaded to a GCS
+bucket in the same project. No Twilio recording product, no third-party processor, no audio
+leaving the perimeter, and no per-minute recording fees. It ships <strong>disabled</strong>
+because recording is a consent decision before it is a technical one: enabling it requires the
+spoken notice in the greeting (wired via <code>recordingNotice()</code>) and honoring
+two-party-consent law for callers in states that require it.</p>
+
+<h2>The honest gap list</h2>
+<p>What a regulated deployment must still do; none of it is architectural, all of it is
+work:</p>
+<div class="tablewrap"><table>
+<tr><th>Gap</th><th>Today (portfolio deployment)</th><th>Regulated requirement</th></tr>
+<tr><td>Transcript logging</td><td>Caller utterances appear in <code>[voice]</code> log lines for debugging</td>
+<td>Silence or scrub conversation content from application logs; keep transcripts only in covered storage.</td></tr>
+<tr><td>Database</td><td>SQLite on the instance</td>
+<td>Cloud SQL or Firestore under the GCP BAA, with retention and deletion policies.</td></tr>
+<tr><td>Admin views</td><td>Token-guarded, timing-safe</td>
+<td>Front with IAP or SSO and audit access; a static token is not an access-control story for PHI.</td></tr>
+<tr><td>Retention</td><td>Indefinite (nothing sensitive stored)</td>
+<td>Written retention schedule for transcripts, recordings, and facts.</td></tr>
+<tr><td>Agreements</td><td>None signed, none needed</td>
+<td>GCP + Deepgram + Twilio BAAs executed before the first PHI call.</td></tr>
+</table></div>
+
+<h2>Where this meets the economics</h2>
+<p>Regulated verticals are where the <a href="scaling.html">volume economics</a> and this page
+intersect: healthcare call centers sit deep in the fleet-wins regime, and the compliance
+posture above is compatible with every architecture band, because the Vertex switch, the
+app-side recorder, and the provider seams were placed before scale ever demanded them. The
+<a href="security.html">security page</a> covers the perimeter controls that apply regardless
+of regulation.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

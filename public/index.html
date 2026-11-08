@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LetsTalk — pair your call</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Lets<span>Talk</span></h1>
+      <p class="tagline">Pair your phone call with this screen</p>
+    </header>
+
+    <!-- Pairing form -->
+    <section id="pair-screen" class="card">
+      <p>On your call, ask for your <strong>pairing code</strong>, then enter it below.</p>
+      <form id="pair-form" autocomplete="off">
+        <input
+          id="code-input"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="6"
+          placeholder="6-digit code"
+          aria-label="Pairing code"
+        />
+        <button type="submit">Pair</button>
+      </form>
+      <p id="pair-error" class="error" role="alert"></p>
+    </section>
+
+    <!-- Live session -->
+    <section id="session-screen" hidden>
+      <div class="status-bar">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">Connected to your call</span>
+      </div>
+
+      <div id="stage" class="card stage">
+        <p class="placeholder">When the AI shows you something, it will appear here.</p>
+      </div>
+
+      <div class="card convo">
+        <h2>Conversation</h2>
+        <div id="transcript" class="transcript"></div>
+        <form id="typebar" class="typebar" autocomplete="off">
+          <input id="type-input" placeholder="Type to her mid-call — she answers out loud" aria-label="Type a message into the call" maxlength="500" />
+          <button type="submit">Send</button>
+        </form>
+        <p class="hint">Talk or type: both land in the same conversation.</p>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

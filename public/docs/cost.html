@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cost engineering · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Cost engineering</h1>
+<p class="lead">A voice agent's bill is a latency diagram with prices on the edges. This page
+covers what a conversation costs at list price, the three-layer caching design that removes
+most of the LLM line, and the crossover math for when self-hosting beats APIs.</p>
+
+<h2>Marginal cost per talking minute</h2>
+<div class="tablewrap"><table>
+<tr><th>Component</th><th>≈ cost / min</th><th>Notes</th></tr>
+<tr><td>Twilio carrier leg</td><td>$0.009</td><td>Inbound voice, list price.</td></tr>
+<tr><td>Deepgram STT</td><td>$0.008</td><td>Streaming for the whole call.</td></tr>
+<tr><td>Deepgram Aura TTS</td><td>$0.006</td><td>Elle speaks roughly half the call.</td></tr>
+<tr><td>Claude (Haiku-class)</td><td>$0.007</td><td>Large grounded prompt, small replies, 120-token cap, before caching.</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>≈ $0.03</strong></td><td>A typical 3-minute call: about nine cents.</td></tr>
+</table></div>
+<p>For comparison, managed voice-agent orchestration platforms charge roughly 2.5× that for
+the layer this codebase implements itself (the pacer, barge-in, echo handling, and turn
+orchestration). SMS runs about a cent per message each way; web chat is LLM tokens only.
+Fixed monthly costs (an always-warm Cloud Run instance, the phone number, the messaging
+campaign fee) dominate at portfolio volume.</p>
+
+<h2>The problem caching solves</h2>
+<p>A voice call re-sends its entire prompt on <em>every turn</em>: persona, inline knowledge
+base, and the whole conversation so far. Without caching, a 20-turn call pays for the same
+several-thousand-token prefix twenty times. Three mechanisms attack this, layered so each
+protects the next:</p>
+
+<h3>Layer 1: the cross-call static block</h3>
+<p>The system prompt is split. The static part, persona, knowledge base, greeting note, is
+<em>byte-identical across every call</em>, so the provider's prompt cache shares one entry
+across all calls: the first call in a window writes it, every later call (and every later
+turn) reads it at a tenth of the input price. Per-call context (caller facts, pairing code,
+clock) rides in a separate dynamic block <em>after</em> the static one, where it cannot break
+the shared prefix:</p>
+<div class="codeblock"><div class="src">src/realtime/twilioBridge.ts · startRealtime()</div><pre>let instructionsDynamic = personaContext(facts, this.session?.pairingCode);
+...
+// Greeting text is config-derived, so this stays in the STATIC block.
+const instructions =
+  `${personaCore("voice", "inline")}\n\n` +
+  `You have already opened the call by saying: ...`;</pre></div>
+
+<h3>Layer 2: the conversation breakpoint</h3>
+<p>Within a call, the fastest-growing prompt component is the conversation itself. A cache
+marker rides on the final message block of each request, so turn N+1 re-reads turns 1…N from
+cache instead of re-buying them:</p>
+<div class="codeblock"><div class="src">src/llm/anthropicShared.ts</div><pre>// With `cacheLastMessage`, a cache_control breakpoint is attached to the
+// final text/tool_result block, so the next turn re-reads the whole prior
+// conversation from cache.
+blocks.push({ type: "text", text: last.content,
+              cache_control: { type: "ephemeral" } });</pre></div>
+<p>The cascade opts every voice turn in (<code>cacheConversation: true</code>); freezing the
+dynamic block at call start is what keeps each turn's breakpoint valid for the whole call.</p>
+
+<h3>Layer 3: turn batching</h3>
+<p>A caller talking in bursts queues several utterances; the drain loop merges them into
+<em>one</em> LLM call and one coherent answer instead of an API call (and a spoken reply)
+apiece. Fewer calls, fewer tokens, no stacked replies.</p>
+
+<h3>Proof, not vibes</h3>
+<p>Every LLM call logs its token accounting, so caching is verified in production, not
+assumed:</p>
+<div class="codeblock"><div class="src">src/llm/anthropic.ts · logUsage()</div><pre>[llm] tokens: in=42 cacheRead=6210 cacheWrite=0 out=58</pre></div>
+<p>A healthy call shows <code>cacheRead</code> climbing turn over turn while <code>in</code>
+stays small. At Haiku list prices, $1/MTok raw input, $0.10 cached read, $1.25 cache write , 
+a warm call bills the bulk of each turn's prompt at the cached rate, and the cross-call block
+means even a caller's <em>first</em> turn reads the persona from cache if any call ran
+recently.</p>
+
+<h2>When self-hosting wins: the crossover math</h2>
+<p class="lead" style="font-size:0.9rem">This section is the short version; the full
+band-by-band treatment, with the crossover chart and per-shift trade-offs, is on
+<a href="scaling.html">Architectures by volume</a>.</p>
+<p>APIs are pay-per-use; GPUs are pay-always. The break-even is a division, and it was modeled
+explicitly for this system's call-center variant (assumptions: a single mid-range cloud GPU
+around $600/month running an open STT + small-LLM + open-TTS stack, versus ≈$0.0075/min in
+replaced API spend per minute at the cached rates above):</p>
+<div class="tablewrap"><table>
+<tr><th>Decision</th><th>Break-even volume</th><th>Meaning</th></tr>
+<tr><td>First self-hosted GPU</td><td>≈ 80,000 min/month (≈ 16,000 calls)</td>
+<td>Below this, hosted APIs are strictly cheaper. A personal assistant's volume is orders of magnitude below it.</td></tr>
+<tr><td>Full fleet economics</td><td>≈ 4.2M min/month (≈ 830,000 calls)</td>
+<td>Where a dedicated fleet with utilization engineering beats per-use pricing across the board.</td></tr>
+</table></div>
+<p>The honest conclusion cuts both ways: at portfolio volume the hosted cascade is the right
+stack and self-hosting would multiply costs; at call-center volume the same architecture
+(and especially the <a href="architecture.html">fused-talker roadmap</a>, which concentrates
+most turns on the cheapest component) is the difference between the LLM line dominating the
+bill and it being a rounding error next to telephony.</p>
+
+<h2>Cost controls that are really product decisions</h2>
+<ul>
+  <li><strong>120-token reply cap</strong> on voice turns, short replies are better phone
+  conversation <em>and</em> the largest single output-cost lever.</li>
+  <li><strong>Inline grounding on the phone</strong>, a bigger prompt (nearly free once
+  cached) buys the removal of a retrieval round-trip per turn: paying pennies for
+  latency.</li>
+  <li><strong>The abuse tiers</strong> (<a href="security.html">security</a>) cap the damage a
+  hostile dialer can do to the bill; the blocked tier never engages the paid pipeline.</li>
+  <li><strong>The lazy Spanish TTS socket</strong>, bilingual capability costs nothing until
+  a caller actually uses it.</li>
+</ul>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

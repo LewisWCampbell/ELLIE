@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Booking and compliance · Elle Docs</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<div class="layout">
+<nav class="sidebar"></nav>
+<div style="flex:1;min-width:0">
+<button class="menu-btn">☰ Docs</button>
+<main>
+
+<h1>Booking and compliance</h1>
+<p class="lead">Elle's job is not to chat; it's to get interested people booked for a short
+intro call with the owner. That means touching a real calendar, sending real texts, and doing
+both inside carrier and consent rules. This page covers the booking machinery and the
+compliance engineering around it.</p>
+
+<h2>The booking flow</h2>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Interest<small>on any channel</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Details gathered<small>name · email · specific time,<br>read back and confirmed</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode hot">book_intro_call<small>free/busy check →<br>tentative calendar hold</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode good">Owner confirms<small>caller told "pending<br>confirmation by email"</small></div>
+  </div>
+  <p class="cap">Every hold is explicitly tentative. The AI never finalizes a meeting on its
+  own, the human confirms, and everyone is told so.</p>
+</div>
+<p>The tool's contract encodes the guardrails, so they hold on every channel that exposes it
+(phone, web, SMS):</p>
+<div class="codeblock"><div class="src">src/booking/booking.ts</div><pre>export const BOOK_INTRO_CALL = {
+  name: "book_intro_call",
+  description:
+    `Tentatively book a short intro call ... Call this once the caller has agreed
+     to meet and you have their name, email, and a specific proposed start time
+     that you have read back to them and they confirmed. The slot is created as
+     TENTATIVE and is NOT confirmed until ${ownerName} approves it ...`,
+  parameters: { ... name, email, start (ISO 8601 with offset), topic ... },
+}</pre></div>
+<p>Execution validates the email shape, checks the slot against the owner's real availability
+(a Google Calendar free/busy query), and creates the event titled
+<em>"pending confirmation"</em>. If no calendar is configured, the request is still captured as
+a lead, the pipeline degrades to note-taking instead of failing. Every outcome writes a
+booking row (<code>status: "pending"</code>) that the owner reviews in the admin views, and a
+paired browser gets a live notification of the request.</p>
+
+<figure class="figwrap"><svg class="sdg" viewBox="0 0 820 524" width="820" height="524" role="img" aria-label="Tentative booking and the consent flow"><defs><marker id="ah-booking" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="sdg-ah"/></marker></defs><line class="sdg-life" x1="90" y1="46" x2="90" y2="516"/><line class="sdg-life" x1="250" y1="46" x2="250" y2="516"/><line class="sdg-life" x1="410" y1="46" x2="410" y2="516"/><line class="sdg-life" x1="570" y1="46" x2="570" y2="516"/><line class="sdg-life" x1="730" y1="46" x2="730" y2="516"/><g class="sdg-actor"><rect x="16" y="8" width="148" height="30" rx="7"/><text x="90" y="27" text-anchor="middle">Caller</text></g><g class="sdg-actor"><rect x="176" y="8" width="148" height="30" rx="7"/><text x="250" y="27" text-anchor="middle">Elle (model)</text></g><g class="sdg-actor"><rect x="336" y="8" width="148" height="30" rx="7"/><text x="410" y="27" text-anchor="middle">booking.ts</text></g><g class="sdg-actor"><rect x="496" y="8" width="148" height="30" rx="7"/><text x="570" y="27" text-anchor="middle">Google Calendar</text></g><g class="sdg-actor"><rect x="656" y="8" width="148" height="30" rx="7"/><text x="730" y="27" text-anchor="middle">sms.ts</text></g><line class="sdg-msg" x1="90" y1="74" x2="246" y2="74" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="170" y="68" text-anchor="middle">&quot;Tuesday at 2 works&quot; + name + email</text><line class="sdg-ret" x1="250" y1="108" x2="94" y2="108" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="170" y="102" text-anchor="middle">reads date, time, timezone back → clear yes</text><line class="sdg-msg" x1="250" y1="142" x2="406" y2="142" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="330" y="136" text-anchor="middle">book_intro_call(name, email, start ISO+offset)</text><path class="sdg-msg" d="M 410 176 h 34 v 18 h -30" fill="none" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="452" y="188" text-anchor="start">validate email shape + timestamp</text><line class="sdg-msg" x1="410" y1="220" x2="566" y2="220" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="490" y="214" text-anchor="middle">freeBusy(start, +30 min)</text><line class="sdg-ret" x1="570" y1="254" x2="414" y2="254" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="490" y="248" text-anchor="middle">slot free</text><line class="sdg-msg" x1="410" y1="288" x2="566" y2="288" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="490" y="282" text-anchor="middle">insert event &quot;pending confirmation&quot;</text><path class="sdg-msg" d="M 410 322 h 34 v 18 h -30" fill="none" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="452" y="334" text-anchor="start">bookings row · status = pending</text><line class="sdg-ret" x1="410" y1="366" x2="254" y2="366" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="330" y="360" text-anchor="middle">tool result: TENTATIVE, say owner confirms by email</text><line class="sdg-msg" x1="250" y1="400" x2="94" y2="400" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="170" y="394" text-anchor="middle">full consent script → plain yes-or-no</text><line class="sdg-msg" x1="250" y1="434" x2="726" y2="434" marker-end="url(#ah-booking)"/><text class="sdg-lbl" x="490" y="428" text-anchor="middle">save_user_fact(&quot;sms_consent&quot;) → confirmation SMS</text><g class="sdg-note"><rect x="182" y="466" width="626" height="26" rx="5"/><text x="495" y="483" text-anchor="middle">consent fact + confirmation text = the audit trail; STOP/HELP enforced by Twilio upstream</text></g></svg><figcaption>The AI never finalizes: every hold is pending until the owner confirms, and texts require the spoken consent script.</figcaption></figure>
+<h3>Timezones, handled once</h3>
+<p>Callers say "Tuesday at two"; calendars need offsets. The per-call context block gives the
+model the current UTC time, the owner's timezone, and the meeting length, and requires the
+proposed start as ISO 8601 with the correct offset. Times are always read back with the
+timezone before booking.</p>
+
+<h2>Identity rules that came from a real bug</h2>
+<p>Facts are keyed by phone number, and phones get shared. After a real mix-up where Elle
+greeted a caller by another person's name, the persona gained a hard rule: stored notes are
+context, never identity. The current caller has <em>no name</em> until they state one in this
+conversation, and a booking's name must come from the conversation itself, if the caller
+never gave one, Elle asks "who should I put this under?" rather than filling it in from
+notes.</p>
+
+<h2>SMS consent: the verbal opt-in flow</h2>
+<p>Sending someone booking texts requires consent that satisfies carrier (A2P) rules, and the
+consent conversation itself has required elements. After a successful booking on a call, Elle
+offers text updates conversationally but completely: what the texts are about, that frequency
+varies, that message and data rates may apply, HELP and STOP keywords, and where the full
+terms live. Then a plain yes-or-no question.</p>
+<div class="diagram">
+  <div class="drow">
+    <div class="dnode">Booking succeeds<small>on a phone call</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode">Consent script<small>all required elements,<br>spoken naturally</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode hot">Clear "yes"<small>only then: save_user_fact<br>category "sms_consent"</small></div>
+    <span class="darrow">→</span>
+    <div class="dnode good">Confirmation SMS<small>sent automatically,<br>consent on record</small></div>
+  </div>
+  <p class="cap">A "no" is dropped gracefully and never re-asked on the same call. The consent
+  fact plus the confirmation text form the audit trail.</p>
+</div>
+<p>The wiring is deliberately mechanical: saving the <code>sms_consent</code> fact is the
+trigger that fires the enrollment-confirmation text, so consent and its confirmation cannot
+drift apart. Inbound STOP/HELP are enforced by Twilio's opt-out handling upstream, the
+application cannot forget to honor them. On a bilingual call, the consent elements are
+delivered in the caller's language (see <a href="languages.html">bilingual mode</a>).</p>
+
+<h2>Why a text-mediated pipeline matters here</h2>
+<p>This page is the practical argument for the <a href="architecture.html">cascade
+architecture</a>: consent scripts and booking read-backs must be delivered <em>as written</em>.
+Because every spoken word passes through text the system controls, exact delivery is
+enforceable, the property a fused speech-to-speech model gives up when it paraphrases.</p>
+
+<h2>Verified offline</h2>
+<p><code>booking.verify.ts</code> proves the flow against a fake calendar: a free slot creates
+a tentative hold and a pending booking row with the "confirm" messaging; a busy slot declines
+and proposes alternatives; a missing calendar still captures the lead. The SMS agent's
+tool loop and the consent-confirmation trigger run under the same offline harness style.</p>
+
+<h2>Reading the time the caller meant</h2>
+<p>The tool asks the model for an ISO 8601 start with an offset, and the persona puts the
+current time and the owner's timezone in context so it can produce one. Models drop the offset
+anyway, and a bare <code>2026-08-28T14:00:00</code> is parsed by JavaScript as <em>local</em>
+time. Local time on Cloud Run is UTC. So a caller who asked for two in the afternoon was
+booked for seven in the morning their time, silently, right after Elle read "two o'clock" back
+to them and they agreed. Nothing surfaces that until the meeting is missed.</p>
+<p>A start that carries its own offset is now trusted exactly as written; one that does not is
+read as wall-clock time in the owner's timezone, which is what both the caller and the persona
+meant. The zone's offset is taken at the booked date rather than today, so a January booking
+made in August gets standard time and not daylight time.</p>
+<div class="codeblock"><div class="src">src/booking/booking.ts</div><pre>export function parseStart(raw: string, timeZone: string): Date | null {
+  const s = raw.trim().replace(" ", "T");
+  if (HAS_OFFSET_RE.test(s)) { ... }          // trust it
+  const naive = new Date(s + "Z");            // read the wall clock
+  const first = new Date(naive.getTime() - zoneOffsetMs(naive, timeZone));
+  return new Date(naive.getTime() - zoneOffsetMs(first, timeZone));  // settle DST
+}</pre></div>
+<p>Two sanity bounds sit alongside it. A start in the past is refused, because models get the
+year wrong and a caller confirming "the 28th" cannot hear which year was heard. So is one more
+than a year out, for the same reason from the other direction.</p>
+<p>The conflict check deliberately fails <em>open</em>: if the free/busy read itself errors,
+the booking still goes ahead. Losing a caller who is ready to commit is worse than a hold the
+owner may have to move, and every hold is confirmed by hand anyway.</p>
+
+<h2>Whose credentials, and with which scopes</h2>
+<p>Two things routinely get conflated when this fails, and they have different fixes.</p>
+<p><strong>Scope is not permission.</strong> A 403 saying <em>insufficient authentication
+scopes</em> does not mean the calendar is unshared; it means the token was issued without
+<code>auth/calendar</code> on it, so the request never got as far as checking access. Default
+Application Default Credentials carry <code>cloud-platform</code> and not calendar, and for
+<em>user</em> credentials the scopes are fixed at login: asking for a scope in code afterwards
+does nothing. The fix is to log in again and ask for it.</p>
+<div class="codeblock"><div class="src">shell</div><pre>gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar</pre></div>
+<p><strong>Identity is not permission either.</strong> Running the check on a laptop or in
+Cloud Shell exercises <em>your</em> account. Elle books as the service account the Cloud Run
+service runs as, and that is the account the calendar must be shared with. Your own access
+proves the calendar id is right and the API is on; it proves nothing about whether Elle can
+book. To check the identity that matters, either impersonate it, which needs Service Account
+Token Creator, or ask the deployed service, which is already running as it:</p>
+<div class="codeblock"><div class="src">shell</div><pre>gcloud auth application-default login \
+  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
+  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar
+
+# or, simplest: the Booking row here does a live free/busy call as the service
+/admin/status</pre></div>
+<p>Granting your own account the Calendar scope through gcloud is also a dead end worth naming:
+Google refuses sensitive scopes to the shared gcloud OAuth client and blocks the consent screen.
+That block is correct behaviour and unrelated to whether booking works, and the way past it is
+not to work around it with an OAuth client or a downloaded key, but to stop authenticating
+locally at all.</p>
+<p>So the authoritative check runs <em>inside the service</em>, where the credentials are
+already the right ones and no consent screen is involved:</p>
+<div class="codeblock"><div class="src">shell</div><pre>./tools/check-calendar.sh</pre></div>
+<p>That looks up the service URL and the admin token itself and prints the report. It takes no
+arguments on purpose: a documented command containing a placeholder is a command someone
+eventually pastes verbatim, and the shell reads <code>&lt;</code> as a redirect rather than as
+"fill this in".</p>
+<p>It walks the same five steps as the command-line tool, because it is literally the same
+function (<code>src/booking/calendarCheck.ts</code>); only the identity differs, which is the
+whole point. It creates one throwaway hold six months out, confirms it reads as busy, moves it,
+deletes it, and reports which step failed and whether the failure was about scope, about
+access, or about the calendar id. The local tool remains useful for confirming the calendar id
+and that the API is on, and it now says plainly that it ran as you.</p>
+
+<h2>An unreadable calendar is not a free calendar</h2>
+<p>The free/busy endpoint answers <code>200 OK</code> even when it could not read the calendar,
+and reports that per calendar instead, as an <code>errors</code> array on the entry. Reading
+the busy list straight out of that response gets an empty list, and an empty busy list means
+free. So a calendar the account could not see at all reported as wide open.</p>
+<p>The consequences were quiet, which is what makes it worth writing down. The conflict check
+passed on a calendar nobody could read, so it protected nothing. The self-check printed
+<em>OK, slot is free</em> immediately above a booking that then failed with a 404, which is a
+contradiction that took a live run to notice. And no caller was ever affected, because the
+failure showed up one step later as a lost hold, attributed to the wrong cause.</p>
+<div class="codeblock"><div class="src">src/booking/calendar.ts</div><pre>const entry = data.calendars?.[calendarId];
+if (!entry) throw new Error(`freeBusy returned no data for ${calendarId}...`);
+if (entry.errors?.length) throw new Error(`freeBusy could not read ${calendarId}...`);
+return (entry.busy ?? []).length === 0;</pre></div>
+<p>An unreadable calendar now raises. <code>npm run verify:calendar</code> asserts both shapes,
+the per-calendar <code>errors</code> array and a response with no entry at all.</p>
+
+<h2>The guest that cannot be invited</h2>
+<p>Every booking attaches the caller as a guest on the hold. Google refuses that
+for a plain service account:</p>
+<div class="codeblock"><div class="src">Google Calendar API</div><pre>403 Service accounts cannot invite attendees without
+    Domain-Wide Delegation of Authority.</pre></div>
+<p>That restriction applies to any calendar simply <em>shared</em> with the service account,
+which is the normal arrangement for a personal calendar, and delegation requires a Workspace
+domain so it is not available there at all. Left alone, this fails the whole insert, which the
+booking handler catches, so every booking quietly degrades to a lead: no hold ever reaches the
+calendar while the caller has been told their time is held.</p>
+<p>The client now retries once without the guest. The hold is what matters, and the caller's
+email is in the event description either way, so the owner adds them when confirming and
+sending the invite. Any other failure, a read-only share or a wrong id, still throws rather
+than being retried around, because those are real misconfigurations that should be visible.</p>
+<div class="note">The live check attaches a guest to its probe hold for exactly this reason. A
+probe without one takes a different path from the thing being tested and would report green
+while every real booking failed.</div>
+
+<h2>Checking it actually works</h2>
+<p><code>npm run verify:booking</code> proves the orchestration against a fake calendar, with
+no network: tentative holds, busy slots refused, bad input rejected, leads captured when no
+calendar is configured, and the time handling above. What it cannot prove is that a given
+deployment can reach the real calendar, and the things that break in production all live on
+that side of the fake: the API not enabled, the calendar not shared with the service account,
+shared read-only rather than "make changes", the wrong id.</p>
+<p><code>./tools/smoke-calendar.sh</code> walks those in order against the real calendar and
+names the step that broke. It reads free/busy, creates a tentative hold six months out, checks
+the hold now reads as busy (if it does not, the double-booking protection is not protecting
+anything), moves it the way a reschedule by text would, and deletes it. Nothing is left behind
+and nobody is emailed, because every write uses <code>sendUpdates=none</code>.</p>
+
+<footer class="docfoot">Elle documentation · built from the LetsTalk codebase · secrets live in
+Secret Manager, never in code or docs.</footer>
+</main>
+</div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# What `gcloud run deploy --source .` must NOT upload.
+#
+# This file exists for one load-bearing reason: without a .gcloudignore, gcloud
+# falls back to .gitignore — and knowledge/ is deliberately gitignored (the
+# corpus is private and stays out of the public repository) while still being
+# REQUIRED at runtime. Deleting this file would make the next deploy silently
+# ship an Elle with an empty knowledge base.
+.git
+.gitignore
+node_modules
+dist
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+profile.md
+Elle-Documentation.html
+Elle-Documentation.pdf
+voice-previews
+course
+docs
