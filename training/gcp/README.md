@@ -68,6 +68,16 @@ If Spot stops the VM mid-run: `gcloud compute instances start elle-train
 itself. The audio steps (9 to 11) resume too, but not on their own: start the
 VM and rerun the same command.
 
+## Same project as Elle, separate identity
+
+Training runs in Elle's own project, where the GPU quota was granted, but the
+VM never runs as the project's default compute account. That account is the
+one Elle's live service uses, with access to all of her secrets, and this VM
+runs downloaded model code. `create_vm.sh` creates an `elle-train` service
+account that can read and write the training bucket and write logs, nothing
+else, and labels the VM and bucket `purpose=elle-training` so costs can be
+budgeted and filtered separately.
+
 ## What the training data contains
 
 Only synthetic conversations, generated on the VM. No caller audio, no
