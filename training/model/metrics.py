@@ -26,6 +26,9 @@ REQUIRED_ARGS = {
 INSTANT_ARGS = {"start"}
 DEAD_AIR_LATENCY_S = 0.7  # contract: reads whose latency exceeds 0.7 s
 LONG_SILENCE_S = 2.0  # secondary, stricter wait metric (not in the contract)
+# A caller barge-in (marked `barge_in` by the generator) should stop Elle within
+# this long; any longer and she talked over the caller.
+YIELD_MAX_S = 1.0
 # "Says nothing": Elle's speech covers less than this much of the wait. Not 0,
 # because speech timing decoded from the text stream is approximate (+-0.3 s);
 # ground-truth events behave identically with 0 or 0.3.
@@ -379,6 +382,21 @@ def wait_stats(call: dict, result: Optional[dict], events: List[dict]) -> Option
             "longest_silence_s": longest}
 
 
+# --- 6: yielding to barge-ins -------------------------------------------------------
+
+def barge_in_stats(ep: dict, events: List[dict]) -> List[Dict[str, Any]]:
+    """For each caller barge-in in the episode (the caller is replayed, so these
+    moments are fixed), how long Elle kept talking after it began."""
+    out = []
+    for c in ep.get("events", []):
+        if c.get("type") != "speech" or c.get("ch") != "caller" or not c.get("barge_in"):
+            continue
+        t = float(c["t"])
+        on = max((_end(e) - t for e in speech(events, "elle") if float(e["t"]) < t < _end(e)), default=0.0)
+        out.append({"t": t, "talk_on_s": on, "talked_over": on > YIELD_MAX_S})
+    return out
+
+
 # --- one episode ---------------------------------------------------------------------
 
 def score_episode(ep: dict, events: Optional[List[dict]] = None, claim_source: str = "labels") -> Dict[str, Any]:
@@ -412,7 +430,9 @@ def score_episode(ep: dict, events: Optional[List[dict]] = None, claim_source: s
             w = wait_stats(c, res.get(c.get("id")), events)
             if w is not None:
                 waits.append(w)
+    barges = barge_in_stats(ep, events)
     flags = {
+        "talked_over": any(b["talked_over"] for b in barges),
         "wrong_tool": not sel["selection_correct"],
         "arg_mismatch": sel["args_matched"] < sel["n_matched"],
         "premature_claim": cl["n_premature"] > 0,
@@ -422,7 +442,7 @@ def score_episode(ep: dict, events: Optional[List[dict]] = None, claim_source: s
     }
     return {"id": ep.get("id"), "scenario": ep.get("scenario"), "negative": bool(labels.get("negative", False)),
             "selection": sel, "claims": cl, "writes": writes, "silent_writes": silent, "waits": waits,
-            "flags": flags, "flagged": any(flags.values())}
+            "barge_ins": barges, "flags": flags, "flagged": any(flags.values())}
 
 
 def _rate(num: int, den: int) -> Optional[float]:
@@ -441,7 +461,9 @@ def aggregate(per_ep: List[Dict[str, Any]]) -> Dict[str, Any]:
     writes = [w for p in per_ep for w in p["writes"]]
     silent = [s for p in per_ep for s in p["silent_writes"]]
     waits = [w for p in per_ep for w in p["waits"]]
+    barges = [b for p in per_ep for b in p.get("barge_ins", [])]
     return {
+        "talk_over_rate": _rate(sum(1 for b in barges if b["talked_over"]), len(barges)), "barge_ins": len(barges),
         "episodes": n,
         "tool_selection_accuracy": _rate(sel, n),
         "call_precision": _rate(n_match, n_pred), "call_recall": _rate(n_match, n_exp),

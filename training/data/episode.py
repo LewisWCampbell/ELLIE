@@ -223,13 +223,19 @@ class Ep:
 
     # --- overlap ---------------------------------------------------------------------
     def interrupt(self, ev: Dict[str, Any], key: str, frac: Optional[float] = None,
-                  act: Optional[str] = None) -> Dict[str, Any]:
+                  act: Optional[str] = None, text: Optional[str] = None,
+                  at: Optional[float] = None) -> Dict[str, Any]:
         """The caller barges in on Elle's `ev`; Elle stops ~0.25 s later and her
-        utterance is truncated to the words actually spoken."""
+        utterance is truncated to the words actually spoken. The caller line is
+        marked `barge_in` so the evaluator can measure how fast a model yields.
+        `at` overrides the start time (it must fall inside `ev`)."""
         frac = frac if frac is not None else self.rng.uniform(0.35, 0.7)
-        c = self.say("caller", self.line(key), at=ev["t"] + frac * ev["dur"], act=act or "barge_in")
+        start = at if at is not None else ev["t"] + frac * ev["dur"]
+        c = self.say("caller", text if text is not None else self.line(key), at=start,
+                     act=act or "barge_in")
         cut = round(c["t"] + self.rng.uniform(0.15, 0.35) - ev["t"], 2)
         if cut < ev["dur"]:
+            c["barge_in"] = True
             words = ev["text"].split()
             keep = max(1, math.ceil(len(words) * cut / ev["dur"]))
             ev["full_text"] = ev["text"]

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+import banks
 import elle_time as T
 from episode import OWNER, Ep, Person, spoken_email
 
@@ -864,6 +865,224 @@ def sc_es_switch_midcall(ep: Ep) -> None:
     full_booking(ep, slot, sms=ep.rng.random() < 0.5)
 
 
+# --- scenarios: intricate interruptions (family "interrupt") ----------------------------------
+#
+# Full duplex means the caller can talk at any moment, including while a tool
+# call is in flight or while Elle is reading out its result. Each scenario
+# below teaches one rule:
+#   * a barge-in takes the floor: Elle stops within a few hundred ms;
+#   * a correction makes the earlier result stale: Elle never reports it, she
+#     checks the new time (a second read while the first may still be pending);
+#   * a correction during a readback voids it: a fresh, complete readback and a
+#     fresh yes come before any write;
+#   * a write that already went out can't be taken back by voice: Elle says so
+#     honestly once the result lands (tentative; text to cancel);
+#   * a backchannel ("mm-hm") is not a barge-in: Elle keeps going;
+#   * a side question during a slow read is answered without guessing the result;
+#   * when both start at once, Elle yields.
+
+def _new_when2(ep: Ep, slot: datetime) -> datetime:
+    slot2 = other_slot(ep, [slot], near=slot)
+    when2, _ = T.caller_phrase(slot2, ep.now, ep.rng, ep.lang)
+    ep.vars["when2"] = when2
+    ep.set_slot("slot2", slot2)
+    return slot2
+
+
+def _report_and_continue(ep: Ep, cid: str, slot: datetime, alts: List[datetime]) -> None:
+    """Report check `cid` for `slot`, then book (free), pick an alternative (busy) or wrap up."""
+    ep.set_slot("slot", slot)
+    if ep.results[cid]["content"].startswith("FREE"):
+        offer = ep.claim("elle_free", cid)
+        if ep.rng.random() < 0.75:
+            accept_offer(ep, offer)
+            full_booking(ep, slot)
+            return
+        ep.C("caller_hold_off", act="decline")
+        ep.E("elle_hold_off_ack", act="ack")
+    else:
+        say_busy(ep, cid, alts)
+        if alts:
+            full_booking(ep, pick_alt(ep, alts))
+            return
+        ep.C("caller_hold_off", act="decline")
+        ep.E("elle_hold_off_ack", act="ack")
+    bye(ep, 0.5)
+
+
+def _last_elle(ep: Ep) -> Optional[Dict]:
+    sp = [e for e in ep.events if e["type"] == "speech" and e["ch"] == "elle"]
+    return max(sp, key=lambda e: e["t"] + e["dur"]) if sp else None
+
+
+def sc_interrupt_claim_correct_time(ep: Ep) -> None:
+    """The caller cuts into Elle's answer with a different time."""
+    slot = slot_and_ask(ep, "check")
+    c1, alts = check(ep, slot, "free" if ep.rng.random() < 0.55 else "busy")
+    if ep.results[c1]["content"].startswith("FREE"):
+        ev = ep.claim("elle_free", c1)
+    else:
+        key = "elle_busy" if len(alts) >= 2 else "elle_busy_one" if alts else "elle_busy_none"
+        ev = ep.claim(key, c1)
+    slot2 = _new_when2(ep, slot)
+    ep.interrupt(ev, "caller_cut_correct_time", frac=ep.rng.uniform(0.3, 0.7), act="correction")
+    c2, alts2 = check(ep, slot2, "free" if ep.rng.random() < 0.65 else "busy", pre_key="elle_yield_ack")
+    _report_and_continue(ep, c2, slot2, alts2)
+
+
+def sc_interrupt_wait_correction(ep: Ep) -> None:
+    """The caller talks over Elle *while the read is in flight* to change the
+    time. The first result is stale when it lands; Elle checks the new time."""
+    slot = slot_and_ask(ep, "check")
+    slot2 = _new_when2(ep, slot)
+
+    def cut(e: Ep, call_t: float, res_t: float) -> None:
+        host = _last_elle(e)
+        t = call_t + e.rng.uniform(0.15, 0.4)
+        if host is None or host["t"] + host["dur"] - t < 0.45:
+            host = e.say("elle", e.line("elle_filler"), at=e.floor() + e.rng.uniform(0.25, 0.5), act="filler")
+            t = host["t"] + e.rng.uniform(0.3, 0.6) * host["dur"]
+        e.interrupt(host, "caller_cut_correct_time", at=t, act="mind_change")
+
+    check(ep, slot, "free" if ep.rng.random() < 0.5 else "busy",
+          latency=ep.rng.uniform(1.6, 3.2), during=cut, fill=False)
+    c2, alts = check(ep, slot2, "free" if ep.rng.random() < 0.65 else "busy", pre_key="elle_yield_ack")
+    _report_and_continue(ep, c2, slot2, alts)
+
+
+def _other_email(ep: Ep) -> str:
+    local, dom = ep.p.email.split("@")
+    doms = [d for d in banks.EMAIL_DOMAINS if d != dom] or [dom]
+    return f"{local}@{ep.rng.choice(doms)}"
+
+
+def sc_interrupt_readback_fix_email(ep: Ep) -> None:
+    """The caller cuts off the readback to fix the email. That readback no
+    longer counts: Elle reads the corrected details back in full and waits
+    for a fresh yes before booking."""
+    slot = slot_and_ask(ep, "book", book_intent=True)
+    c1, _ = check(ep, slot, "free")
+    accept_offer(ep, ep.claim("elle_free", c1))
+    details(ep, save_name=False)
+    rb1 = readback(ep, slot)
+    ep.p.email = _other_email(ep)
+    ep.refresh_vars()
+    ep.interrupt(rb1, "caller_cut_fix_email", frac=ep.rng.uniform(0.55, 0.85), act="correction")
+    if ep.rng.random() < 0.5:
+        ep.E("elle_email_fixed_ack", act="ack")
+    rb2 = readback(ep, slot)
+    cf = confirm(ep)
+    b = book(ep, slot, rb2, cf)
+    booked(ep, b, slot)
+    bye(ep)
+
+
+def sc_interrupt_readback_eager_yes(ep: Ep) -> None:
+    """The caller says yes over the last words of a complete readback ("...sound
+    right?"). That yes counts; the write still waits until they finish."""
+    slot = slot_and_ask(ep, "book", book_intent=True)
+    c1, _ = check(ep, slot, "free")
+    accept_offer(ep, ep.claim("elle_free", c1))
+    details(ep)
+    rb = readback(ep, slot)
+    cf = ep.say("caller", ep.line("caller_eager_confirm"),
+                at=rb["t"] + rb["dur"] - ep.rng.uniform(0.15, 0.5), act="confirm")
+    b = book(ep, slot, rb, cf)
+    booked(ep, b, slot)
+    if ep.rng.random() < 0.5:
+        sms_consent(ep)
+    bye(ep)
+
+
+def sc_interrupt_cancel_during_write(ep: Ep) -> None:
+    """The caller says 'wait, don't book it' after the write already went out.
+    Elle can't unsend it: she waits for the result, then says honestly that it
+    went in as a tentative request and how to cancel (text this number)."""
+    slot = slot_and_ask(ep, "book", book_intent=True)
+    c1, _ = check(ep, slot, "free")
+    accept_offer(ep, ep.claim("elle_free", c1))
+    details(ep)
+    rb = readback(ep, slot)
+    cf = confirm(ep)
+    pre = None
+    while pre is None:  # the bank has an empty "no pre-line" option; this scenario needs one
+        pre = ep.E("elle_book_pre", act="pre_call")
+    at = pre["t"] + ep.rng.uniform(0.05, min(0.5, pre["dur"] * 0.5))
+    args = {"name": ep.p.name, "email": ep.p.email, "start": T.iso(slot)}
+    cid = ep.call("book_intro_call", args, at)
+    lat = ep.rng.uniform(1.3, 2.6)
+    t = at + ep.rng.uniform(0.2, 0.6)
+    if pre["t"] + pre["dur"] - t > 0.3:
+        ep.interrupt(pre, "caller_cut_cancel", at=t, act="cancel")
+    else:
+        ep.say("caller", ep.line("caller_cut_cancel"), at=t, act="cancel")
+    if at + lat - ep.floor() > 0.9:
+        ep.E("elle_hold_on_write", act="filler", gap=ep.gap(0.25, 0.08))
+    ep.result(cid, res_done(ep.p.email), lat)
+    ep.gate(cid, rb, cf)
+    ep.claim("elle_write_landed_cancel", cid)
+    if ep.rng.random() < 0.5:
+        ep.C("caller_keep_it", act="keep")
+        ep.E("elle_keep_ack", act="ack")
+    else:
+        ep.C("caller_will_text_cancel", act="ack")
+        ep.E("elle_text_cancel_ack", act="ack")
+    bye(ep, 0.7)
+
+
+def sc_interrupt_pick_alt_early(ep: Ep) -> None:
+    """Elle lists alternatives; the caller either grabs the first one before
+    she finishes (a barge-in: she stops) or just says 'mm-hm' along the way (a
+    backchannel: she keeps going)."""
+    slot = slot_and_ask(ep, "book", book_intent=True)
+    cid, alts = check(ep, slot, "busy")
+    if len(alts) < 2:
+        raise RetryScenario()
+    ep.set_slot("slot", slot)
+    ev = ep.claim("elle_busy", cid)
+    if ep.rng.random() < 0.55:
+        ep.interrupt(ev, "caller_cut_pick_alt1", frac=ep.rng.uniform(0.72, 0.88), act="pick")
+        ep.set_slot("slot", alts[0])
+        full_booking(ep, alts[0])
+    else:
+        ep.backchannel(ev)
+        full_booking(ep, pick_alt(ep, alts))
+
+
+def sc_side_question_during_wait(ep: Ep) -> None:
+    """A slow read; the caller asks something unrelated meanwhile. Elle answers
+    it (no availability guess), keeps the wait covered, then reports."""
+    slot = slot_and_ask(ep, "check")
+    qs = banks.BANKS[ep.lang]["caller_side_question"]
+    ans = banks.BANKS[ep.lang]["elle_side_answer"]
+    i = ep.rng.randrange(len(qs))
+
+    def ask(e: Ep, call_t: float, res_t: float) -> None:
+        e.say("caller", qs[i], at=max(call_t + e.rng.uniform(0.2, 0.7), e.end["caller"] + 0.3), act="side_question")
+        e.say("elle", ans[i], act="answer", gap=e.gap(0.3, 0.1))
+
+    outcome = "free" if ep.rng.random() < 0.6 else "busy"
+    cid, alts = check(ep, slot, outcome, latency=ep.rng.uniform(2.6, 4.5), during=ask)
+    _report_and_continue(ep, cid, slot, alts)
+
+
+def sc_talk_collision(ep: Ep) -> None:
+    """Both start talking at the same moment, at the greeting and again after
+    an offer. Elle yields each time; the caller keeps the floor."""
+    g = ep.E("elle_greet", act="greeting", at=round(ep.rng.uniform(0.2, 0.5), 2))
+    ep.interrupt(g, "caller_open_book", at=g["t"] + ep.rng.uniform(0.0, 0.3), act="intent")
+    slot = T.random_slot(ep.rng, ep.now)
+    ask_for_slot(ep, slot, direct=False)
+    cid, _ = check(ep, slot, "free")
+    ep.claim("elle_free", cid)
+    t0 = ep.floor() + ep.gap(0.95, 0.2, 0.6, 1.4)
+    e = ep.say("elle", ep.line("elle_followup_offer"), at=t0, act="offer")
+    ep.interrupt(e, "caller_yes_book", at=t0 + ep.rng.uniform(0.0, 0.2), act="accept")
+    if ep.rng.random() < 0.3:
+        ep.E("elle_after_collision", act="ack", gap=ep.gap(0.25, 0.08))
+    full_booking(ep, slot)
+
+
 # --- negatives (labelled; the evaluator must flag these) --------------------------------------
 
 def sc_neg_premature_availability_claim(ep: Ep) -> None:
@@ -991,6 +1210,15 @@ SCENARIOS: List[Scenario] = [
     Scenario("returning_caller_notes", sc_returning_caller_notes, "identity", 3),
     Scenario("barge_in_then_book", sc_barge_in_then_book, "overlap", 3),
     Scenario("es_switch_midcall", sc_es_switch_midcall, "bilingual", 2),
+    # intricate interruptions (tool calls in flight, readbacks, results being read out)
+    Scenario("interrupt_claim_correct_time", sc_interrupt_claim_correct_time, "interrupt", 4),
+    Scenario("interrupt_wait_correction", sc_interrupt_wait_correction, "interrupt", 4),
+    Scenario("interrupt_readback_fix_email", sc_interrupt_readback_fix_email, "interrupt", 3),
+    Scenario("interrupt_readback_eager_yes", sc_interrupt_readback_eager_yes, "interrupt", 2),
+    Scenario("interrupt_cancel_during_write", sc_interrupt_cancel_during_write, "interrupt", 3),
+    Scenario("interrupt_pick_alt_early", sc_interrupt_pick_alt_early, "interrupt", 3),
+    Scenario("side_question_during_wait", sc_side_question_during_wait, "interrupt", 3),
+    Scenario("talk_collision", sc_talk_collision, "interrupt", 3),
     # negatives
     Scenario("neg_premature_availability_claim", sc_neg_premature_availability_claim, "negative", 3, EN_ES, 0.15),
     Scenario("neg_premature_bookings_claim", sc_neg_premature_bookings_claim, "negative", 1),

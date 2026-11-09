@@ -106,5 +106,6 @@ eval:
     tool_selection_accuracy: {min: 0.95}
     arg_exact_match: {min: 0.95}
     dead_air_rate: {max: 0.10}
+    talk_over_rate: {max: 0.10}
     silent_write_narration_rate: {max: 0.02}
     plain_text_loss_delta: {max: 0.05}  # forgetting: held-out plain text loss may rise at most this much over the base

@@ -489,6 +489,83 @@ EN = {
         "Of course. What day and time works for you?",
         "Absolutely. When were you thinking?",
     ],
+    # --- intricate interruptions (scenarios.py, family "interrupt") -------------------------
+    "caller_cut_correct_time": [
+        "Sorry, wait, I meant {when2}.",
+        "Oh, hang on, not that one. {when2_cap}.",
+        "Actually, sorry, can you check {when2} instead?",
+        "Wait, no, I misspoke. {when2_cap} is what I meant.",
+    ],
+    "elle_yield_ack": [
+        "Oh, sure. Let me look at {slot2} instead.",
+        "No problem, checking {slot2}.",
+        "Got it, {slot2}. One sec.",
+    ],
+    "caller_cut_fix_email": [
+        "Sorry, the email's actually {email_sp}.",
+        "Oh wait, use {email_sp} instead, that's my work one.",
+        "Hang on, it's {email_sp}, not that one.",
+    ],
+    "elle_email_fixed_ack": [
+        "Thanks, updating that.",
+        "Got it, I'll use that one.",
+        "Okay, changed.",
+    ],
+    "caller_eager_confirm": [
+        "Yep, that's right.", "Yes, perfect.", "Yeah, go for it.", "That's right, yes.",
+    ],
+    "caller_cut_cancel": [
+        "Oh wait, hang on, actually don't book that.",
+        "Sorry, hold on, can you cancel that?",
+        "Wait, actually, never mind, don't book it.",
+    ],
+    "elle_write_landed_cancel": [
+        "Okay. Heads up, that went through just before you said so, but it's only a tentative request, nothing's final until Lewis confirms. If you'd like it gone, just text this number and say cancel. Or we can keep it.",
+        "Understood. It had already gone in as a tentative hold, pending Lewis's confirmation. You can text this number any time to cancel it, or keep it if you change your mind.",
+    ],
+    "caller_keep_it": [
+        "Oh, okay, you know what, just keep it.", "Ah, fine, leave it then.", "Actually that's okay, keep it.",
+    ],
+    "caller_will_text_cancel": [
+        "Okay, I'll text to cancel.", "Got it, I'll send a text.", "Okay, I'll do that.",
+    ],
+    "elle_keep_ack": [
+        "Sounds good, it stays as is.", "Great, it's still on.", "Perfect, I'll leave it.",
+    ],
+    "elle_text_cancel_ack": [
+        "Sounds good. Anything else I can help with?", "Perfect. Anything else?",
+    ],
+    "caller_side_question": [
+        "Is it a video call or a phone call, by the way?",
+        "How long are these calls usually?",
+        "Does he do these calls every week?",
+        "Should I prepare anything for it?",
+    ],
+    # Aligned with caller_side_question: answer i goes with question i.
+    "elle_side_answer": [
+        "Lewis sends the joining details with his confirmation email, so you'll have them there.",
+        "Usually about thirty minutes, just a first conversation.",
+        "He fits a few in when he can, it varies week to week.",
+        "Nothing to prepare, it's an informal first chat.",
+    ],
+    "elle_hold_on_write": [
+        "One sec, let me see where that landed.", "Hang on, it was already going through.",
+        "Okay, one moment.",
+    ],
+    "elle_side_back": [
+        "Okay, still checking that time.", "And the calendar's still loading, one moment.",
+        "Bear with me, still looking.",
+    ],
+    "elle_after_collision": [
+        "Sorry, go ahead.", "Oh, sorry, you go.", "Go ahead, sorry.",
+    ],
+    "elle_followup_offer": [
+        "And if that doesn't suit, I can look at another day.",
+        "I can also check later in the week if that helps.",
+    ],
+    "caller_cut_pick_alt1": [
+        "Oh, {alt1}, that works.", "{alt1_cap}, let's do that.", "Wait, {alt1} is great.",
+    ],
     "caller_push_book": [
         "Just go ahead and book it under {name}.",
         "It's {name}. Can you just lock it in?",
