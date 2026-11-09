@@ -17,11 +17,14 @@ mkdir -p "$ELLE_WORK"
 cp "$HOME/gcp.env" "$REPO/training/gcp/gcp.env"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
+# Ubuntu packages, all up front: venv support (the Deep Learning VM image ships
+# Python without it), Opus for Moshi's audio, espeak-ng for Kokoro's Spanish.
+sudo apt-get update -q
+sudo apt-get install -y python3-venv libopus-dev espeak-ng
 python3 -m venv "$ELLE_WORK/venv"
 source "$ELLE_WORK/venv/bin/activate"
 pip install --upgrade pip
 pip install -r "$REPO/training/model/requirements.txt"
-sudo apt-get install -y libopus-dev
 [ -d "$ELLE_WORK/personaplex" ] || git clone https://github.com/NVIDIA/personaplex "$ELLE_WORK/personaplex"
 pip install "$ELLE_WORK/personaplex/moshi/."
 
@@ -34,7 +37,6 @@ PY
 
 # The open speech model (Kokoro) that voices the training audio, in its own
 # venv: its dependencies can upgrade packages the training venv relies on.
-sudo apt-get install -y espeak-ng
 python3 -m venv "$ELLE_WORK/tts-venv"
 "$ELLE_WORK/tts-venv/bin/pip" install --upgrade pip
 "$ELLE_WORK/tts-venv/bin/pip" install -r "$REPO/training/data/requirements.txt" "kokoro==0.9.4" "misaki[en]==0.9.4"
