@@ -20,7 +20,7 @@ import render_audio as R  # noqa: E402
 from audio_timing import apply_measured  # noqa: E402
 from generate import build_episode, generate_split, write_jsonl  # noqa: E402
 from scenarios import SCENARIOS  # noqa: E402
-from tts_backends import (KOKORO_CALLERS_EN, KOKORO_CALLERS_ES, SAMPLE_RATE, FakeBackend, KokoroBackend,  # noqa: E402
+from tts_backends import (KOKORO_CALLERS_EN, KOKORO_CALLERS_ES, KOKORO_ELLE, SAMPLE_RATE, FakeBackend, KokoroBackend,  # noqa: E402
                           clip_key, event_voice, tokens_to_words)
 from validate import validate_episode  # noqa: E402
 
@@ -175,7 +175,7 @@ class TestVoices(unittest.TestCase):
                     v, lang, speed = event_voice(ep, e, be)
                     self.assertEqual((v, lang, speed), event_voice(ep, e, be))
                     if e["ch"] == "elle":
-                        self.assertEqual(v, "af_heart" if lang == "en" else "ef_dora")
+                        self.assertEqual(v, KOKORO_ELLE["en"] if lang == "en" else KOKORO_ELLE["es"])
                         self.assertEqual(speed, 1.0)
                     else:
                         voices.setdefault("caller", v)
@@ -187,7 +187,8 @@ class TestVoices(unittest.TestCase):
         self.assertTrue(any(v.startswith(("af_", "bf_")) for v in seen))
         self.assertTrue(any(v.startswith(("am_", "bm_")) for v in seen))
         self.assertTrue(any(v.startswith("b") for v in seen))
-        self.assertNotIn("af_heart", seen)
+        self.assertNotIn(KOKORO_ELLE["en"], seen)  # callers never use Elle's voice
+        self.assertNotIn(KOKORO_ELLE["es"], seen)
 
     def test_clip_key_depends_on_everything(self):
         be = FakeBackend()
@@ -511,5 +512,5 @@ class TestCheckKokoro(unittest.TestCase):
             self.assertTrue(out["ok"])
             self.assertGreater(out["throughput"]["audio_s"], 0)
             wavs = os.listdir(os.path.join(d, "out"))
-            self.assertIn("elle_en_af_heart.wav", wavs)
+            self.assertIn(f"elle_en_{KOKORO_ELLE['en']}.wav", wavs)
             self.assertIn("caller_es_em_alex.wav", wavs)

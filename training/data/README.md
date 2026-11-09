@@ -275,7 +275,7 @@ merging, fallback to proportional timing, British G2P for `b*` voices, and speed
 `render_audio.py check-kokoro --out DIR` checks all of these on the VM in one command. It confirms the
 imports, CUDA, the espeak-ng Spanish G2P, the spaCy model and that every configured voice is in the
 local snapshot. Then it synthesizes English and Spanish lines and checks lengths, timestamps and the
-effect of speed, writes a sample WAV for Elle (`af_heart`, plus `af_bella` for comparison) and for every
+effect of speed, writes a sample WAV for Elle (her configured voice, plus `af_bella` for comparison) and for every
 caller voice, and measures throughput. It exits non-zero if anything fails.
 
 **Dependencies.**
@@ -287,18 +287,17 @@ caller voice, and measures throughput. It exits non-zero if anything fails.
 
 **Voices** (all configurable by environment variable). Elle uses one fixed voice per language:
 
-- **English: `af_heart`** (`KOKORO_ELLE_EN`). It is the top-graded voice in Kokoro's catalogue, so it has
-  the fewest artifacts, and the model learns to imitate Elle's channel. `af_bella` is closer to
-  production's bright `aura-2-thalia-en`; check-kokoro renders both so you can choose.
+- **English: `bf_isabella`** (`KOKORO_ELLE_EN`), British English, chosen by ear from the `check-kokoro`
+  samples. British voices are pronounced with British G2P.
 - **Spanish: `ef_dora`** (`KOKORO_ELLE_ES`). It is the only native Spanish female voice. The
   code-switching episode therefore changes Elle's voice when it switches language; set
-  `KOKORO_ELLE_ES=af_heart` to keep one identity, with an accent.
+  `KOKORO_ELLE_ES=bf_isabella` to keep one identity, with an accent.
 
 Callers get one voice per episode, chosen deterministically from `(scenario, seed)`, with a base speed
 in [0.94, 1.06] for the episode and ±0.02 jitter per line (Elle stays at speed 1.0):
 
 - **English pool** (`KOKORO_CALLERS_EN`): 18 voices, women and men, US and UK accents. UK voices use
-  British G2P. `af_heart`, `bm_lewis` (the owner's name) and the novelty `*_santa` voices are excluded.
+  British G2P. Elle's own voice, `bm_lewis` (the owner's name) and the novelty `*_santa` voices are excluded.
 - **Spanish pool** (`KOKORO_CALLERS_ES`), used when the episode has any Spanish: `em_alex`, the only
   other native Spanish voice, plus Portuguese, Italian and French voices speaking Spanish phonemes
   (`pf_dora`, `pm_alex`, `if_sara`, `im_nicola`, `ff_siwis`). That gives accented callers of both

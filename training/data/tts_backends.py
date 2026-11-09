@@ -188,17 +188,16 @@ KOKORO_REPO = "hexgrad/Kokoro-82M"
 
 # Voice names from Kokoro-82M's VOICES.md (v1.0). UNVERIFIED in this sandbox;
 # `check-kokoro` fails if any configured voice file is missing from the snapshot.
-# Elle: af_heart is the catalogue's top-graded voice (fewest artifacts, which
-# matters because the model learns to imitate Elle's channel); af_bella is the
-# closer match to production's bright aura-2-thalia-en; check-kokoro renders both
-# for an A/B listen. Spanish has one native female voice, ef_dora.
-KOKORO_ELLE = {"en": os.environ.get("KOKORO_ELLE_EN", "af_heart"),
+# Elle: bf_isabella (British English), chosen by ear from the check-kokoro
+# samples. British voices get British G2P (lang_code 'b'). Spanish has one
+# native female voice, ef_dora. Override with KOKORO_ELLE_EN / KOKORO_ELLE_ES.
+KOKORO_ELLE = {"en": os.environ.get("KOKORO_ELLE_EN", "bf_isabella"),
                "es": os.environ.get("KOKORO_ELLE_ES", "ef_dora")}
 # Callers: never Elle's voice; US and UK accents; both genders. Excludes
 # bm_lewis (the owner's name) and the novelty *_santa voices.
-KOKORO_CALLERS_EN = ["af_bella", "af_nicole", "af_sarah", "af_aoede", "af_kore", "af_jessica",
+KOKORO_CALLERS_EN = ["af_heart", "af_bella", "af_nicole", "af_sarah", "af_aoede", "af_kore", "af_jessica",
                      "am_michael", "am_fenrir", "am_puck", "am_eric", "am_liam", "am_onyx",
-                     "bf_emma", "bf_isabella", "bf_alice", "bm_george", "bm_fable", "bm_daniel"]
+                     "bf_emma", "bf_alice", "bm_george", "bm_fable", "bm_daniel"]
 # Spanish has only em_alex as a native non-Elle voice, so the pool adds Portuguese,
 # Italian and French voices speaking Spanish phonemes (kokoro allows a voice from
 # another language, with a warning): accented Spanish, plausible for callers.
