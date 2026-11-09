@@ -37,11 +37,19 @@ for role in roles/logging.logWriter roles/monitoring.metricWriter; do
 done
 
 if [ -z "$IMAGE_FAMILY" ]; then
+  # Newest CUDA 12 "common" Deep Learning VM image, whatever OS Google currently
+  # builds it on (it moved from Debian to Ubuntu, which broke an OS filter here).
   IMAGE_FAMILY="$(gcloud compute images list --project deeplearning-platform-release \
-    --filter='family~^common-cu12 AND family~debian' --sort-by='~creationTimestamp' \
+    --filter='family~^common-cu12' --sort-by='~creationTimestamp' \
     --limit=1 --format='value(family)')"
-  echo "Using Deep Learning VM image family: $IMAGE_FAMILY"
 fi
+if [ -z "$IMAGE_FAMILY" ]; then
+  echo "No Deep Learning VM image found. List them with:" >&2
+  echo "  gcloud compute images list --project deeplearning-platform-release --filter='family~^common-cu' --format='value(family)' | sort -u" >&2
+  echo "and set IMAGE_FAMILY in gcp.env to one of them." >&2
+  exit 1
+fi
+echo "Using Deep Learning VM image family: $IMAGE_FAMILY"
 
 SPOT_FLAGS=()
 if [ "$SPOT" = "1" ]; then
