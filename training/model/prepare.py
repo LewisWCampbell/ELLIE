@@ -310,7 +310,8 @@ def mimi_audio(wav_path: str, T: int, mimi_cfg: dict) -> np.ndarray:  # pragma: 
 
     global _MIMI
     if _MIMI is None:
-        info = loaders.CheckpointInfo.from_hf_repo(mimi_cfg.get("hf_repo", "kyutai/moshiko-pytorch-bf16"))
+        from moshi_compat import checkpoint
+        info = checkpoint(mimi_cfg.get("hf_repo", "kyutai/moshiko-pytorch-bf16"), loaders)
         _MIMI = info.get_mimi(device=mimi_cfg.get("device", "cuda"))
         _MIMI.set_num_codebooks(N_CODEBOOKS_PER_CHANNEL)
         _MIMI.eval()

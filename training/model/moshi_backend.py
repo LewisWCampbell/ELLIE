@@ -104,7 +104,13 @@ class MoshiAdapter(nn.Module):
 
     def forward(self, text: torch.Tensor, audio: torch.Tensor):
         codes = torch.cat([text[:, None], audio], dim=1)  # [B, 17, T]
-        out = self.lm(codes=codes, condition_tensors=None)
+        # Kyutai's LMModel trains through forward(codes, condition_tensors);
+        # PersonaPlex's has no forward() and names the same pass forward_train.
+        # Both return LMOutput(logits, mask, text_logits, text_mask).
+        if hasattr(self.lm, "forward_train"):
+            out = self.lm.forward_train(codes)
+        else:
+            out = self.lm(codes=codes, condition_tensors=None)
         # NaNs at invalid positions: zero them; the masks remove them from the loss.
         text_logits = torch.nan_to_num(out.text_logits[:, 0])
         audio_logits = torch.nan_to_num(out.logits)
@@ -120,7 +126,8 @@ def load_real_model(cfg: Dict[str, Any], device: str = "cuda"):  # pragma: no co
 
     mcfg = cfg["model"]
     dtype = getattr(torch, mcfg.get("dtype", "bfloat16"))
-    info = loaders.CheckpointInfo.from_hf_repo(mcfg["hf_repo"])
+    from moshi_compat import checkpoint
+    info = checkpoint(mcfg["hf_repo"], loaders)
     lcfg = cfg.get("lora", {})
     use_kyutai_lora = _has_kyutai_lora() and lcfg.get("impl", "auto") in ("auto", "kyutai")
     kwargs = {}
@@ -133,10 +140,15 @@ def load_real_model(cfg: Dict[str, Any], device: str = "cuda"):  # pragma: no co
     for p in lm.parameters():
         p.requires_grad = False
     if not use_kyutai_lora:
-        # PersonaPlex path: our wrapper on the temporal + depth transformers.
-        # Must be merged (tiny_model.LoRALinear.merged) before LMGen streaming.
-        apply_lora(lm, int(lcfg.get("rank", 128)), float(lcfg.get("scaling", 2.0)), ["*"],
-                   include_prefixes=lcfg.get("include_prefixes", ["transformer.", "depformer."]))
+        # PersonaPlex path: LoRA on the attention weights themselves
+        # (param_lora), because PersonaPlex reads its weights directly instead
+        # of calling layers, so wrapping layers cannot work. Merged into the
+        # weights (merge_param_lora) before LMGen streaming.
+        from param_lora import apply_param_lora
+        wrapped = apply_param_lora(lm, int(lcfg.get("rank", 128)), float(lcfg.get("scaling", 2.0)),
+                                   include_prefixes=tuple(lcfg.get("include_prefixes", ["transformer.", "depformer."])))
+        if not wrapped:
+            raise RuntimeError("found no attention weights to attach LoRA to; the model layout has changed")
     else:
         # moshi-finetune's initialize_lora_parameters: A kaiming, B zero.
         for n, m in lm.named_modules():
@@ -221,6 +233,8 @@ def load_for_inference(cfg: Dict[str, Any], ckpt_dir: str, device: str = "cuda")
     lm = adapter.lm
     load_trainable_state_dict(lm, torch.load(os.path.join(ckpt_dir, "trainable.pt"), map_location=device), new_ids)
     merge_foreign_lora(lm)
+    from param_lora import merge_param_lora
+    merge_param_lora(lm)
     for p in lm.parameters():
         p.requires_grad = False
     lm.eval()

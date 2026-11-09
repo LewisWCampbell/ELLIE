@@ -232,7 +232,8 @@ def build_tokenizer(cfg: dict, base_dir: str = ".") -> TextTokenizer:
             # moshi's CheckpointInfo.from_hf_repo(...).tokenizer, read from loaders.py.
             from moshi.models import loaders  # type: ignore
 
-            path = str(loaders.CheckpointInfo.from_hf_repo(cfg["hf_repo"]).tokenizer)
+            from moshi_compat import checkpoint
+            path = str(checkpoint(cfg["hf_repo"], loaders).tokenizer)
         return SentencePieceTokenizer(path)
     raise ValueError(f"unknown tokenizer kind {kind!r}")
 
