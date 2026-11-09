@@ -36,9 +36,11 @@ cp "$HOME/gcp.env" "$REPO/training/gcp/gcp.env"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
 # Ubuntu packages, all up front: venv support (the Deep Learning VM image ships
-# Python without it), Opus for Moshi's audio, espeak-ng for Kokoro's Spanish.
+# Python without it), Python's C headers (PersonaPlex compiles layers with
+# torch.compile, whose Triton backend builds a C extension and fails without
+# them), Opus for Moshi's audio, espeak-ng for Kokoro's Spanish.
 sudo apt-get update -q
-sudo apt-get install -y python3-venv libopus-dev espeak-ng
+sudo apt-get install -y python3-venv python3-dev libopus-dev espeak-ng
 python3 -m venv "$ELLE_WORK/venv"
 source "$ELLE_WORK/venv/bin/activate"
 pip install --upgrade pip
