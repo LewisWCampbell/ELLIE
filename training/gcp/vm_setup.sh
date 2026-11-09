@@ -9,6 +9,24 @@
 set -euo pipefail
 source "$HOME/gcp.env"
 : "${HF_TOKEN:?export HF_TOKEN first}"
+
+# Check the token before spending 20 minutes on installs: is it a valid token,
+# and does it unlock the gated PersonaPlex weights? (Status codes only; the
+# token is never printed.)
+hf_status() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HF_TOKEN" "$1"; }
+if [ "$(hf_status https://huggingface.co/api/whoami-v2)" != "200" ]; then
+  echo "HF_TOKEN is not a valid Hugging Face token (it may have been pasted into the wrong prompt)." >&2
+  echo "Run the read line on its own, paste the token at the prompt, then rerun this script." >&2
+  exit 1
+fi
+case "$(hf_status https://huggingface.co/nvidia/personaplex-7b-v1/resolve/main/.gitattributes)" in
+  200|302|307) ;;
+  *) echo "The token is valid but cannot download nvidia/personaplex-7b-v1." >&2
+     echo "Accept the licence on that model's page, signed in as the token's owner." >&2
+     exit 1 ;;
+esac
+echo "Hugging Face token OK, PersonaPlex access OK."
+
 export ELLE_WORK="$HOME/elle-work"
 REPO="$HOME/ELLE"
 mkdir -p "$ELLE_WORK"
@@ -24,9 +42,11 @@ sudo apt-get install -y python3-venv libopus-dev espeak-ng
 python3 -m venv "$ELLE_WORK/venv"
 source "$ELLE_WORK/venv/bin/activate"
 pip install --upgrade pip
-pip install -r "$REPO/training/model/requirements.txt"
+# PersonaPlex first: it pins the PyTorch version it needs (below 2.5). Installed
+# second, it made pip download a newer PyTorch and then replace it, ~3 GB wasted.
 [ -d "$ELLE_WORK/personaplex" ] || git clone https://github.com/NVIDIA/personaplex "$ELLE_WORK/personaplex"
 pip install "$ELLE_WORK/personaplex/moshi/."
+pip install -r "$REPO/training/model/requirements.txt"
 
 export HF_HOME="$ELLE_WORK/hf"
 python3 - <<'PY'
