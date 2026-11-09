@@ -60,7 +60,7 @@ gcloud compute instances create "$VM_NAME" \
   --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
   --machine-type "$MACHINE_TYPE" \
   --image-project deeplearning-platform-release --image-family "$IMAGE_FAMILY" \
-  --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-ssd \
+  --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type "${BOOT_DISK_TYPE:-pd-balanced}" \
   --maintenance-policy TERMINATE \
   --service-account "$SA_EMAIL" --scopes cloud-platform \
   --metadata install-nvidia-driver=True \

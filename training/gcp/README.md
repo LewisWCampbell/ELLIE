@@ -30,8 +30,8 @@ Approximate; the console shows the exact hourly price when you create the VM.
 | A100 80GB, on-demand | roughly $5 to $6 | roughly $225 to $270 |
 | H100, on-demand | roughly $10 to $12 | roughly $200 to $240 |
 
-Add the smoke test and a few short debugging sessions, plus roughly $75 to $130
-a month while the 750 GB SSD boot disk exists. **Delete the VM when you are
+Add the smoke test and a few short debugging sessions, plus roughly $75
+a month while the 750 GB boot disk exists (balanced persistent disk). **Delete the VM when you are
 done**; a stopped VM still bills for its disk. The training script shuts the VM
 down when a run finishes, so it never idles on a GPU.
 
