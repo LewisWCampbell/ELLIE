@@ -12,6 +12,7 @@ touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
 fail() {
   echo "run_all: FAILED at step '$STEP' ($(date)). Log: ~/run_all.log. Shutting down in 5 minutes."
   rm -f "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
+  stop_watchdog
   sudo shutdown -h +5
   exit 1
 }

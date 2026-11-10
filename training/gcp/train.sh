@@ -29,5 +29,6 @@ python3 training/model/train.py --config training/gcp/config/gcp.yaml --resume
 kill $SYNC 2>/dev/null || true
 gcloud storage rsync -r "$RUN_DIR" "$BUCKET/runs/elle_tools_v1"
 rm -f "$ELLE_WORK/.training"
+stop_watchdog
 echo "Training finished; results are in $BUCKET/runs/elle_tools_v1. Shutting down to stop billing."
 sudo shutdown -h +2
