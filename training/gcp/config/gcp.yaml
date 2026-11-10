@@ -19,3 +19,10 @@ prepare:
   audio:
     audio_dir: ${ELLE_WORK}/audio
     audio_is_retimed: true              # assembled by `prepare.sh assemble` from retimed.jsonl
+
+train:
+  # PersonaPlex has no gradient checkpointing, so batch 8 risks running out of
+  # the A100's 80 GB. 4 x 4 keeps the same effective batch (16) at about half
+  # the activation memory.
+  batch_size: 4
+  grad_accum: 4

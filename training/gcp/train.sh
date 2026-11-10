@@ -6,6 +6,11 @@
 # the run finishes, results go to the bucket and the VM shuts itself down so
 # it stops billing.
 source "$(dirname "$0")/_env.sh"
+# After a Spot stop during data preparation, the boot service lands here:
+# hand over to run_all.sh, which finishes preparation before training.
+if [ "${1:-}" = "--resumed" ] && [ -f "$ELLE_WORK/.pipeline" ]; then
+  exec bash "$REPO/training/gcp/run_all.sh"
+fi
 RUN_DIR="$ELLE_WORK/runs/elle_tools_v1"
 mkdir -p "$RUN_DIR"
 touch "$ELLE_WORK/.training"
