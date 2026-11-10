@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # On the VM: the whole pipeline, unattended, start to finish.
-#   tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh 2>&1 | tee -a ~/run_all.log'
+#   tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh'
 # synth -> retime -> assemble -> mimi -> train. Every step resumes, and the
 # boot service reruns this script after a Spot stop (train.sh hands over to
 # it while the .pipeline marker exists). On success train.sh shuts the VM
 # down; on any failure this script shuts it down too, so nothing bills idle.
 source "$(dirname "$0")/_env.sh"
+# Always log to ~/run_all.log, also when the boot service (not tmux) runs us.
+if [ -z "${RUN_ALL_LOGGING:-}" ]; then
+  export RUN_ALL_LOGGING=1
+  exec > >(tee -a "$HOME/run_all.log") 2>&1
+fi
 set -E  # let the ERR trap fire inside functions too
 touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
 
