@@ -40,6 +40,7 @@ step synth
 step retime
 step assemble
 step mimi
+step plain
 
 STEP=train
 rm -f "$ELLE_WORK/.pipeline"

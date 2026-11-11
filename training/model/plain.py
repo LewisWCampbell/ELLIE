@@ -100,9 +100,22 @@ def validate_with_dataset(eps: List[dict]) -> int:
     return sum(1 for e in eps if validate_episode(e))
 
 
-def build_synth(cfg: dict, base: str, n_train: int, n_val: int, seed: int = 0, out: Optional[str] = None) -> Dict[str, Any]:
+def synth_episodes(n_train: int, n_val: int, seed: int = 0) -> List[dict]:
+    return [synth_episode(i, "train", seed) for i in range(n_train)] + [synth_episode(i, "val", seed) for i in range(n_val)]
+
+
+def build_synth(cfg: dict, base: str, n_train: int, n_val: int, seed: int = 0, out: Optional[str] = None,
+                episodes: Optional[str] = None) -> Dict[str, Any]:
+    """With real audio (audio.mode mimi), pass `episodes`: the plain episodes
+    after the same TTS pipeline as the tool data (synth -> retime -> assemble),
+    i.e. the retimed JSONL the audio was assembled from. Otherwise they are
+    generated here and get placeholder/zero audio."""
     out_dir = resolve_path(out or cfg["data"]["plain_prepared_dir"], base)
-    eps = [synth_episode(i, "train", seed) for i in range(n_train)] + [synth_episode(i, "val", seed) for i in range(n_val)]
+    if episodes:
+        with open(episodes, encoding="utf-8") as f:
+            eps = [json.loads(l) for l in f if l.strip()]
+    else:
+        eps = synth_episodes(n_train, n_val, seed)
     bad = validate_with_dataset(eps)
     tok = get_tokenizer(cfg, base, eps)
     examples = [x for ep in eps for x in prepare_episode(ep, cfg, tok, base)]
@@ -168,6 +181,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--n-val", type=int, default=50)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--out")
+    s.add_argument("--episodes", help="voiced, retimed plain episodes (JSONL) instead of generating them")
+    g = sub.add_parser("episodes", help="write the plain episodes as JSONL, for the TTS pipeline")
+    g.add_argument("--n-train", type=int, default=400)
+    g.add_argument("--n-val", type=int, default=50)
+    g.add_argument("--seed", type=int, default=0)
+    g.add_argument("--out", required=True)
     e = sub.add_parser("external")
     e.add_argument("--config", required=True)
     e.add_argument("--jsonl", required=True)
@@ -176,9 +195,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     e.add_argument("--limit", type=int, default=0)
     e.add_argument("--out")
     args = ap.parse_args(argv)
+    if args.cmd == "episodes":
+        eps = synth_episodes(args.n_train, args.n_val, args.seed)
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as f:
+            for ep in eps:
+                f.write(json.dumps(ep, ensure_ascii=False) + "\n")
+        print(json.dumps({"episodes": len(eps), "validator_issues": validate_with_dataset(eps), "out": args.out}))
+        return 0
     cfg, base = load_config(args.config)
     if args.cmd == "synth":
-        res = build_synth(cfg, base, args.n_train, args.n_val, args.seed, args.out)
+        res = build_synth(cfg, base, args.n_train, args.n_val, args.seed, args.out, args.episodes)
     else:
         res = build_external(cfg, base, args.jsonl, args.main_speaker, args.val_share, args.limit, args.out)
     print(json.dumps(res, indent=2))
