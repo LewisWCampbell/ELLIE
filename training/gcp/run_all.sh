@@ -17,6 +17,9 @@ touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
 fail() {
   echo "run_all: FAILED at step '$STEP' ($(date)). Log: ~/run_all.log. Shutting down in 5 minutes."
   rm -f "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
+  # Copy the log to the bucket so the error can be read without a GPU.
+  tail -c 200000 "$HOME/run_all.log" | tr -d '\000' > "$HOME/run_all.tail.log" || true
+  gcloud storage cp "$HOME/run_all.tail.log" "$BUCKET/logs/run_all_failed_$(date +%Y%m%d_%H%M).log" || true
   stop_watchdog
   sudo shutdown -h +5
   exit 1
