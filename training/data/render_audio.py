@@ -282,6 +282,11 @@ def cmd_synth(a: argparse.Namespace) -> int:
 
 # --- assemble -------------------------------------------------------------------------------
 
+def _fsync(path: str) -> None:
+    with open(path, "rb") as f:
+        os.fsync(f.fileno())
+
+
 def assemble_episode(ep: Dict[str, Any], cache: str, out_dir: str) -> Dict[str, str]:
     """Place cached clips at the episode's times; write <id>.wav and <id>.json."""
     evs = ep["events"]
@@ -324,6 +329,7 @@ def assemble_episode(ep: Dict[str, Any], cache: str, out_dir: str) -> Dict[str, 
         w.setsampwidth(2)
         w.setframerate(SAMPLE_RATE)
         w.writeframes(inter.tobytes())
+    _fsync(tmp)  # a Spot preemption is a power cut: unsynced files come back empty
     os.replace(tmp, wav_path)
 
     words, sources = [], set()
@@ -345,6 +351,8 @@ def assemble_episode(ep: Dict[str, Any], cache: str, out_dir: str) -> Dict[str, 
     json_path = os.path.join(out_dir, f"{ep['id']}.json")
     with open(json_path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(align, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(json_path + ".tmp", json_path)
     return {"wav": wav_path, "json": json_path}
 
