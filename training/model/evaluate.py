@@ -317,8 +317,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--listen", type=int, default=0,
                     help="model mode: save Elle's generated audio for the first N episodes as WAV "
                          "(decoded with Mimi; a no-op on the CPU/tiny backend)")
+    ap.add_argument("--max-episodes", type=int, default=0, help="model mode: override eval.max_episodes")
     args = ap.parse_args(argv)
     cfg, base = load_config(args.config)
+    if args.max_episodes:
+        cfg.setdefault("eval", {})["max_episodes"] = args.max_episodes
     prepared_dir = resolve_path(cfg["data"]["prepared_dir"], base)
     eps_path = args.episodes or os.path.join(prepared_dir, "episodes.jsonl")
     if not os.path.exists(eps_path):
