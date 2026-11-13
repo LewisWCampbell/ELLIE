@@ -34,4 +34,4 @@ run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kerne
 } > "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/diagnose_$STAMP.log" || true
 gcloud storage rsync -r "$OUT" "$BUCKET/runs/$DRUN/eval" || true
-sudo shutdown -h +2
+[ "${NO_SHUTDOWN:-0}" = 1 ] || sudo shutdown -h +2   # NO_SHUTDOWN=1 when another job follows
