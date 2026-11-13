@@ -23,6 +23,13 @@ from textvocab import (EPAD_ID, FRAME_RATE, PAD_ID, RESULT_CLOSE, RESULT_OPEN, T
                        TextTokenizer)
 
 MAX_SPAN_TOKENS = 256  # a span longer than this is abandoned as malformed
+# Frame limits for a <tool> span. Training writes a call's tokens back to back
+# (prepare.py), so padding inside one means the model lost the thread; a call
+# that never closes must not swallow the rest of the episode (it would also
+# keep <tool> banned and block every result). The longest call in the data is
+# about 100 frames.
+MAX_SPAN_FRAMES = 200
+MAX_PAD_RUN_IN_TOOL = 2
 _RESULT_HEAD = re.compile(r'^\s*"([^"]*)">(.*)$', re.S)
 
 
@@ -36,12 +43,26 @@ class StreamEvent:
 
 
 class ToolStreamParser:
-    def __init__(self, tok: TextTokenizer):
+    def __init__(self, tok: TextTokenizer, max_span_frames: int = MAX_SPAN_FRAMES,
+                 max_pad_run: int = MAX_PAD_RUN_IN_TOOL):
         self.tok = tok
         self.ids = tok.special_ids
         self.mode = "speech"  # speech | tool | result
         self.buf: List[int] = []
         self.span_start = 0
+        self.pad_run = 0
+        self.max_span_frames = max_span_frames
+        self.max_pad_run = max_pad_run
+
+    def _abort(self, frame: int, token: Optional[int], error: str) -> List[StreamEvent]:
+        """Abandon the open span: a tool_error carrying what was decoded so far."""
+        mode, start, text = self.mode, self.span_start, self.tok.decode(self.buf)
+        self.mode, self.buf, self.pad_run = "speech", [], 0
+        return [StreamEvent("tool_error", frame, token, start, {"error": f"{mode} span: {error}", "text": text})]
+
+    def flush(self, frame: int) -> List[StreamEvent]:
+        """End of stream: a span still open becomes a tool_error (never silently lost)."""
+        return self._abort(frame, None, "still open at end of stream") if self.in_span else []
 
     @property
     def in_span(self) -> bool:
@@ -51,10 +72,10 @@ class ToolStreamParser:
         ids = self.ids
         if self.mode == "speech":
             if token == ids[TOOL_OPEN]:
-                self.mode, self.buf, self.span_start = "tool", [], frame
+                self.mode, self.buf, self.span_start, self.pad_run = "tool", [], frame, 0
                 return []
             if token == ids[RESULT_OPEN]:
-                self.mode, self.buf, self.span_start = "result", [], frame
+                self.mode, self.buf, self.span_start, self.pad_run = "result", [], frame, 0
                 return []
             if token in (ids[TOOL_CLOSE], ids[RESULT_CLOSE]):
                 return [StreamEvent("tool_error", frame, token, frame, {"error": "stray close marker"})]
@@ -77,13 +98,19 @@ class ToolStreamParser:
             m = _RESULT_HEAD.match(text)
             return [StreamEvent("result", frame, token, start,
                                 {"id": m.group(1) if m else "", "content": m.group(2) if m else text})]
+        if self.mode == "tool" and frame - self.span_start > self.max_span_frames:
+            return self._abort(frame, token, f"not closed within {self.max_span_frames} frames")
         if token in (EPAD_ID, PAD_ID):
-            return []  # padding inside a span carries nothing
+            # Results are forced and contiguous; padding there carries nothing.
+            if self.mode == "tool":
+                self.pad_run += 1
+                if self.pad_run > self.max_pad_run:
+                    return self._abort(frame, token, "padding inside the call")
+            return []
+        self.pad_run = 0
         self.buf.append(token)
         if len(self.buf) > MAX_SPAN_TOKENS:
-            mode, start = self.mode, self.span_start
-            self.mode, self.buf = "speech", []
-            return [StreamEvent("tool_error", frame, token, start, {"error": f"{mode} span too long"})]
+            return self._abort(frame, token, "too long")
         return []
 
 
@@ -196,6 +223,9 @@ def decode_text_stream(tokens: Sequence[int], tok: TextTokenizer, frame_offset: 
                                "type": "tool_call", "id": "", "name": None, "args": {}, "error": ev.payload.get("error")})
         if not was_span and parser.in_span:
             flush()  # a span ends the utterance in progress
+    for ev in parser.flush(len(tokens)):
+        events.append({"t": round((ev.start_frame + frame_offset) / FRAME_RATE, 3), "ch": "elle",
+                       "type": "tool_call", "id": "", "name": None, "args": {}, "error": ev.payload.get("error")})
     flush()
     events.sort(key=lambda e: e["t"])
     return events

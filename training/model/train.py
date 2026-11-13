@@ -331,6 +331,11 @@ def eval_loss(model, examples, cfg, special_ids, device) -> Dict[str, float]:
     rng = random.Random(0)
     tot: Dict[str, float] = {"loss": 0.0, "text_loss": 0.0, "audio_loss": 0.0}
     hit = n = 0
+    # <tool> (deciding to call: the scarce, hard decision) and </tool> (ending a
+    # call: easy) are reported separately; pooled, a <tool> that is never the
+    # argmax hides behind a perfect </tool> at ~0.5.
+    c = {"open_hit": 0, "open_n": 0, "open_p": 0.0, "open_rank": 0.0, "close_hit": 0, "close_n": 0,
+         "fp": 0, "other_n": 0}
     bs = int(cfg["train"]["batch_size"])
     for i in range(0, len(examples), bs):
         batch = {k: v.to(device) for k, v in collate(examples[i:i + bs], int(cfg["train"]["seq_frames"]), rng).items()}
@@ -338,17 +343,42 @@ def eval_loss(model, examples, cfg, special_ids, device) -> Dict[str, float]:
         l = compute_loss(out, batch, cfg.get("loss", {}), special_ids)
         for k in tot:
             tot[k] += float(l[k]) * len(examples[i:i + bs])
-        # next-token accuracy on marker targets (are tool spans being learned?)
-        sel = torch.zeros_like(batch["text"], dtype=torch.bool)
+        logits, tgt = out[0].float(), batch["text"]
+        valid = (batch["loss_mask"] > 0) & (tgt >= 0)
+        pred = logits.argmax(-1)
+        sel = torch.zeros_like(tgt, dtype=torch.bool)
         for s in special_ids[:2]:  # <tool>, </tool>: the predicted ones
-            sel |= batch["text"] == s
-        sel &= batch["loss_mask"] > 0
+            sel |= tgt == s
+        sel &= valid
         if sel.any():
-            hit += int((out[0].argmax(-1)[sel] == batch["text"][sel]).sum())
+            hit += int((pred[sel] == tgt[sel]).sum())
             n += int(sel.sum())
+        if special_ids:
+            open_id, close_id = special_ids[0], special_ids[1]
+            o = valid & (tgt == open_id)
+            if o.any():
+                lo = logits[o]
+                c["open_hit"] += int((lo.argmax(-1) == open_id).sum())
+                c["open_n"] += int(o.sum())
+                c["open_p"] += float(torch.softmax(lo, -1)[:, open_id].sum())
+                c["open_rank"] += float((lo > lo[:, open_id:open_id + 1]).sum())
+            cl = valid & (tgt == close_id)
+            if cl.any():
+                c["close_hit"] += int((pred[cl] == close_id).sum())
+                c["close_n"] += int(cl.sum())
+            other = valid & (tgt != open_id)
+            c["fp"] += int((pred[other] == open_id).sum())
+            c["other_n"] += int(other.sum())
     model.train()
     res = {k: v / max(1, len(examples)) for k, v in tot.items()}
-    res["tool_marker_acc"] = hit / n if n else float("nan")
+    nan = float("nan")
+    res["tool_marker_acc"] = hit / n if n else nan
+    res["tool_open_acc"] = c["open_hit"] / c["open_n"] if c["open_n"] else nan
+    res["tool_open_p"] = c["open_p"] / c["open_n"] if c["open_n"] else nan
+    res["tool_open_rank"] = c["open_rank"] / c["open_n"] if c["open_n"] else nan  # 0 = argmax
+    res["tool_close_acc"] = c["close_hit"] / c["close_n"] if c["close_n"] else nan
+    res["tool_open_false_positive_rate"] = c["fp"] / c["other_n"] if c["other_n"] else nan
+    res["tool_open_targets"] = c["open_n"]
     return res
 
 
@@ -461,7 +491,9 @@ def run(cfg: dict, base_dir: str, resume: bool = False, log=print) -> Dict[str, 
             if ecfg.get("every_steps") and (step % int(ecfg["every_steps"]) == 0 or step == max_steps):
                 rec.update({f"eval_{k}": v for k, v in eval_loss(model, eval_ex, cfg, special_ids, device).items()})
                 msg = (f"step {step}: loss {agg['loss']:.4f} text {agg['text_loss']:.4f} audio {agg['audio_loss']:.4f} "
-                       f"| eval text {rec['eval_text_loss']:.4f} tool-marker acc {rec['eval_tool_marker_acc']:.2f}")
+                       f"| eval text {rec['eval_text_loss']:.4f} <tool> acc {rec['eval_tool_open_acc']:.2f}"
+                       f" p {rec['eval_tool_open_p']:.2f} </tool> acc {rec['eval_tool_close_acc']:.2f}"
+                       f" false <tool> {rec['eval_tool_open_false_positive_rate']:.4f}")
                 if plain_eval:
                     pl = eval_loss(model, plain_eval, cfg, special_ids, device)["text_loss"]
                     rec.update({"eval_plain_text_loss": pl, "eval_plain_text_loss_base": plain_base,

@@ -146,7 +146,9 @@ def reference_report(eps: List[dict], prepared: Optional[List[dict]], tok, gates
             ep = by_id.get(ex["episode_id"])
             if ep is None or "#w" in ex["id"]:
                 continue  # windows of long episodes are skipped in the round trip
-            rt.append(M.score_episode(ep, merge_events(ep, decode_text_stream(ex["text"], tok, ex["meta"]["frame_offset"])),
+            P = int(ex["meta"].get("prompt_frames", 0))
+            rt.append(M.score_episode(ep, merge_events(ep, decode_text_stream(ex["text"][P:], tok,
+                                                                              ex["meta"]["frame_offset"] + P)),
                                       claim_source="detected"))
         rep["round_trip"] = {"metrics": M.aggregate([p for p in rt if not p["negative"]]), **_summarize_group(rt, by_id)}
     rep["per_episode"] = per
@@ -212,15 +214,23 @@ def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], ga
     per, samples, listened, calls = [], [], [], []
     exs = stitch_windows([ex for ex in prepared if ex["episode_id"] in by_id])[: int(ecfg.get("max_episodes", 100))]
     listen_note = None
+    diag = []
     for ex in exs:
         ep = by_id[ex["episode_id"]]
         out = closed_loop(generator, tok, ex, ep, gcfg)
-        elle = decode_text_stream(out["text"], tok, ex["meta"]["frame_offset"])
+        P = int(ex["meta"].get("prompt_frames", 0))
+        # Score what the model said after the system prompt (the prompt is forced, not speech).
+        elle = decode_text_stream(out["text"][P:], tok, ex["meta"]["frame_offset"] + P)
         sc = M.score_episode(ep, merge_events(ep, elle), claim_source="detected")
         per.append(sc)
         calls += [dict(c, episode=ep["id"]) for c in out["calls"]]
+        d = episode_diagnostics(ex, out, tok)
+        diag.append(dict(d, id=ep["id"]))
         if len(samples) < 5:
-            samples.append({"id": ep["id"], "decoded": tok.decode(out["text"]), "events": elle, "calls": out["calls"]})
+            samples.append({"id": ep["id"], "decoded": tok.decode(out["text"][P:]),
+                            "reference": tok.decode([int(t) for t in ex["text"][P:]]),
+                            "events": elle, "calls": out["calls"], "tool_errors": out["tool_errors"],
+                            "diagnostics": d})
         if listen and len(listened) < listen and out_dir:
             audio = generator.decode_audio()
             if audio is None:
@@ -237,12 +247,61 @@ def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], ga
            "injection": {"calls": len(calls), "injected": len(waits),
                          "mean_wait_frames_after_ready": (sum(waits) / len(waits)) if waits else None,
                          "max_wait_frames_after_ready": max(waits) if waits else None},
+           "attempts": summarize_diagnostics(diag), "per_episode_diagnostics": diag,
+           "decoding": {k: gcfg.get(k) for k in ("temperature_text", "top_k_text", "seed_offset", "elle_audio")},
            "listen": {"files": listened, "note": listen_note}, "samples": samples, "per_episode": per}
     fpath = os.path.join(resolve_path(cfg["run_dir"], base), "plain_forgetting.json")
     if os.path.exists(fpath):
         with open(fpath) as f:
             rep["plain_forgetting"] = json.load(f)
     return rep
+
+
+def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str, Any]:
+    """What the model did around each place the reference has a call: the
+    highest p(<tool>) it gave within +-window frames (from the frame stats the
+    generator records before sampling), whether it emitted <tool> there, and
+    the first frame after the prompt where its text left the reference."""
+    from textvocab import TOOL_OPEN
+
+    tool = tok.special_ids[TOOL_OPEN]
+    P = int(ex["meta"].get("prompt_frames", 0))
+    ref = [int(t) for t in ex["text"]]
+    gen = [int(t) for t in out["text"]]
+    stats = out.get("frame_stats") or []
+    ref_calls = [f for f, t in enumerate(ref) if t == tool and f >= P]
+    near = []
+    for f in ref_calls:
+        lo, hi = max(P, f - window), min(len(gen), f + window + 1)
+        ps = [stats[g]["p_tool"] for g in range(lo, hi) if g < len(stats) and stats[g]]
+        near.append({"ref_frame": f, "max_p_tool": max(ps) if ps else None,
+                     "emitted": any(gen[g] == tool for g in range(lo, hi))})
+    free = [st["p_tool"] for st in stats[P:] if st]
+    first_div = next((f for f in range(P, min(len(ref), len(gen))) if ref[f] != gen[f]), None)
+    return {"reference_calls": len(ref_calls), "tool_opens": out.get("tool_opens", 0),
+            "calls": len(out.get("calls", [])), "tool_errors": len(out.get("tool_errors", [])),
+            "error_samples": [{"error": e.get("error"), "text": (e.get("text") or "")[:200]}
+                              for e in out.get("tool_errors", [])[:3]],
+            "max_p_tool": max(free) if free else None, "near_reference_calls": near,
+            "first_divergence_frame": first_div, "prompt_frames": P}
+
+
+def summarize_diagnostics(diag: List[dict]) -> Dict[str, Any]:
+    near = [n for d in diag for n in d["near_reference_calls"]]
+    ps = [n["max_p_tool"] for n in near if n["max_p_tool"] is not None]
+    div = [d["first_divergence_frame"] - d["prompt_frames"] for d in diag if d["first_divergence_frame"] is not None]
+    return {
+        "reference_calls": sum(d["reference_calls"] for d in diag),
+        "tool_opens": sum(d["tool_opens"] for d in diag),
+        "calls_parsed": sum(d["calls"] for d in diag),
+        "tool_errors": sum(d["tool_errors"] for d in diag),
+        "emitted_near_reference_call": sum(1 for n in near if n["emitted"]),
+        "near_reference_p_tool_mean": (sum(ps) / len(ps)) if ps else None,
+        "near_reference_p_tool_over_0.5": sum(1 for p in ps if p > 0.5),
+        "near_reference_p_tool_over_0.1": sum(1 for p in ps if p > 0.1),
+        "probed_reference_calls": len(ps),
+        "median_frames_to_first_divergence": sorted(div)[len(div) // 2] if div else None,
+    }
 
 
 # --- output ----------------------------------------------------------------------
@@ -287,6 +346,17 @@ def markdown(rep: Dict[str, Any]) -> str:
         inj = rep.get("injection", {})
         lines += ["", f"- tool calls made: {inj.get('calls')}, results injected: {inj.get('injected')},"
                   f" mean frames from result ready to injection: {_fmt(inj.get('mean_wait_frames_after_ready'))}"]
+        at = rep.get("attempts")
+        if at:
+            lines += [f"- decoding: {rep.get('decoding')}",
+                      f"- call attempts: reference calls {at['reference_calls']}, <tool> emitted {at['tool_opens']},"
+                      f" parsed calls {at['calls_parsed']}, failed/unclosed spans {at['tool_errors']},"
+                      f" emitted within 10 frames of a reference call {at['emitted_near_reference_call']}",
+                      f"- p(<tool>) near reference calls: mean {_fmt(at['near_reference_p_tool_mean'])},"
+                      f" >0.5 at {at['near_reference_p_tool_over_0.5']}/{at['probed_reference_calls']},"
+                      f" >0.1 at {at['near_reference_p_tool_over_0.1']}/{at['probed_reference_calls']}",
+                      f"- median frames after the prompt before the text first leaves the reference:"
+                      f" {at['median_frames_to_first_divergence']}"]
         pf = rep.get("plain_forgetting")
         if pf:
             g = pf.get("gate") or {}
@@ -318,10 +388,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="model mode: save Elle's generated audio for the first N episodes as WAV "
                          "(decoded with Mimi; a no-op on the CPU/tiny backend)")
     ap.add_argument("--max-episodes", type=int, default=0, help="model mode: override eval.max_episodes")
+    ap.add_argument("--temperature-text", type=float, help="model mode: text sampling temperature (0 = greedy)")
+    ap.add_argument("--top-k-text", type=int, help="model mode: text top-k")
+    ap.add_argument("--seed-offset", type=int, help="model mode: added to each episode's seed")
+    ap.add_argument("--elle-audio", choices=["generate", "teacher"],
+                    help="model mode: teacher = force Elle's recorded audio (diagnostic: separates text from audio drift)")
+    ap.add_argument("--tag", help="model mode: write into <out>/<tag>/ (several decoding settings side by side)")
     args = ap.parse_args(argv)
     cfg, base = load_config(args.config)
     if args.max_episodes:
         cfg.setdefault("eval", {})["max_episodes"] = args.max_episodes
+    gen_over = {"temperature_text": args.temperature_text, "top_k_text": args.top_k_text,
+                "seed_offset": args.seed_offset, "elle_audio": args.elle_audio}
+    cfg.setdefault("eval", {}).setdefault("gen", {}).update({k: v for k, v in gen_over.items() if v is not None})
     prepared_dir = resolve_path(cfg["data"]["prepared_dir"], base)
     eps_path = args.episodes or os.path.join(prepared_dir, "episodes.jsonl")
     if not os.path.exists(eps_path):
@@ -338,6 +417,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     gates = cfg.get("eval", {}).get("gates", {})
     tok = build_tokenizer(cfg.get("tokenizer", {}), base) if prepared is not None or args.mode == "model" else None
     out_dir = args.out or os.path.join(resolve_path(cfg["run_dir"], base), "eval")
+    if args.tag:
+        out_dir = os.path.join(out_dir, args.tag)
     os.makedirs(out_dir, exist_ok=True)
     if args.mode == "reference":
         rep = reference_report(eps, prepared, tok, gates)

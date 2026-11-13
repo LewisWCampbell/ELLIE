@@ -120,6 +120,66 @@ class MiniPersonaPlex(unittest.TestCase):
             ok = ~torch.isnan(a)
             self.assertTrue(torch.allclose(a[ok], b[ok], atol=1e-4), "merged model must match the trained one")
 
+    def test_streaming_generator_matches_training_forward(self):
+        """The live generator must see exactly what training saw. Drive the real
+        MoshiFrameGenerator frame by frame with an example's own text and audio
+        (prompt frames with -1 audio, as prepare.py writes them) and compare the
+        probabilities it computes before sampling with forward_train's on the
+        same example. This is the check that would have caught the 7B run's
+        zero tool calls before any GPU time: the generator fed Mimi silence and
+        self-generated audio where training had -1, and LMGen's first step
+        swallowed frame 0."""
+        import numpy as np
+
+        import moshi_backend as mb
+        from param_lora import merge_param_lora
+
+        adapter, _tok, new_ids, _g = mb.load_real_model(self.cfg, device="cpu")
+        lm = adapter.lm
+        torch.manual_seed(3)
+        for p in lm.parameters():  # make the LoRA deltas non-zero, as after training
+            if p.requires_grad:
+                p.data.normal_(0, 0.05)
+        merge_param_lora(lm)
+        lm.eval()
+
+        T, P = 24, 6
+        g = torch.Generator().manual_seed(4)
+        text = torch.randint(4, 300, (T,), generator=g)
+        text[P + 5] = new_ids[0]
+        text[P + 9] = new_ids[1]
+        audio = torch.randint(0, self.mini["card"], (16, T), generator=g)
+        audio[:, :P] = -1  # prompt frames: zero embedding on all 16 streams
+        audio[8:, T - 3:] = -1  # caller audio ran out (Mimi tail)
+        with torch.no_grad():
+            ref = lm.forward_train(torch.cat([text[None, None], audio[None]], 1))
+        ref_p = torch.softmax(ref.text_logits[0, 0].float(), -1)  # [T, V]
+
+        class FakeMimi:
+            sample_rate, frame_rate = 24000, 12.5
+
+            def encode(self, x):
+                return torch.zeros(1, 8, max(1, x.shape[-1] // 1920), dtype=torch.long)
+
+        gen = mb.MoshiFrameGenerator(lm, FakeMimi(), None, {"temperature_text": 0.0}, device="cpu")
+        gen.track_ids = {"tool": new_ids[0], "pad": 3, "epad": 0}
+        gen.frame_stats = []
+        ex = {"text": text.numpy(), "audio": audio.numpy(), "meta": {"prompt_frames": P}}
+        gen.start(ex, {"seed": 0}, {})
+        try:
+            for f in range(T):
+                tk = gen.step(f, audio[8:, f].numpy(), int(text[f]), [], elle_codes=audio[:8, f].numpy())
+                self.assertEqual(tk, int(text[f]))
+        finally:
+            gen.finish()
+        self.assertEqual(len(gen.frame_stats), T)
+        for f, st in enumerate(gen.frame_stats):
+            self.assertIsNotNone(st, f"frame {f}: no logits seen")
+            for key, tid in (("p_tool", new_ids[0]), ("p_pad", 3), ("p_epad", 0)):
+                self.assertAlmostEqual(st[key], float(ref_p[f, tid]), delta=1e-4,
+                                       msg=f"frame {f} {key}: streaming {st[key]:.6f} vs training {float(ref_p[f, tid]):.6f}")
+            self.assertEqual(st["argmax"], int(ref_p[f].argmax()), f"frame {f}: argmax differs")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -295,7 +295,12 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
                     gen_self._edit_logits(text_logits)
                     return super().process_transformer_output(transformer_out, text_logits, *a, **k)
 
-            self.lm_gen = _HookedLMGen(lm, device=device, **kw)
+            # sample_rate / frame_rate / audio_silence_frame_cnt as NVIDIA's
+            # offline.py passes them (the defaults assume 32 kHz audio and
+            # break a .wav voice prompt with 24 kHz Mimi).
+            self.lm_gen = _HookedLMGen(lm, device=device, sample_rate=int(mimi.sample_rate),
+                                       frame_rate=mimi.frame_rate,
+                                       audio_silence_frame_cnt=int(0.5 * mimi.frame_rate), **kw)
         frame = int(round(mimi.sample_rate / mimi.frame_rate))
         with torch.no_grad():
             self.silence = mimi.encode(torch.zeros(1, 1, frame, device=device))[:, :, :1]  # [1, 8, 1]
@@ -304,6 +309,13 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
 
     # hooks
     def _edit_logits(self, text_logits: torch.Tensor) -> None:
+        if self.track_ids is not None:
+            # What the model wanted before any forcing/banning: lets the report
+            # separate "never considered <tool>" from "considered it but lost".
+            p = torch.softmax(text_logits.reshape(-1, text_logits.shape[-1])[0].float(), -1)
+            t = self.track_ids
+            self._probe = {"p_tool": float(p[t["tool"]]), "p_pad": float(p[t["pad"]]),
+                           "p_epad": float(p[t["epad"]]), "argmax": int(p.argmax())}
         if self._forced is not None:
             text_logits.fill_(float("-inf"))
             text_logits[..., self._forced] = 0.0
@@ -317,11 +329,22 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
     def start(self, ex: dict, ep: dict, gcfg: dict) -> None:
         import contextlib
 
-        torch.manual_seed(int(ep.get("seed", 0)))
+        torch.manual_seed(int(ep.get("seed", 0)) + int(gcfg.get("seed_offset", 0)))
         self._stack = contextlib.ExitStack()
         self._stack.enter_context(torch.no_grad())
         self._stack.enter_context(self.lm_gen.streaming(1))
         self._codes: List[torch.Tensor] = []
+        self._probe = None
+        if self.flavor == "personaplex" and not self.native_prompt:
+            # PersonaPlex's LMGen does not run the model on its very first
+            # step: it overwrites that frame with the initial token and returns
+            # None. Spend that step on a dummy frame here, so loop frame f lands
+            # exactly where forward_train put frame f in training (otherwise the
+            # first prompt token is silently lost and everything shifts by one).
+            neg = torch.full((1, 8, 1), -1, dtype=torch.long, device=self.device)
+            from textvocab import PAD_ID
+            assert self.lm_gen.step(input_tokens=neg, moshi_tokens=neg, text_token=PAD_ID) is None
+            assert int(self.lm_gen._streaming_state.offset) == 1, "LMGen priming step did not advance"
         if self.native_prompt:
             P = int(ex["meta"].get("prompt_frames", 0))
             prompt = [int(t) for t in ex["text"][:P] if int(t) > 3]
@@ -332,28 +355,40 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
                 self.lm_gen.load_voice_prompt(self.voice_prompt)
             self.lm_gen.step_system_prompts(self.mimi)
 
-    def step(self, frame, caller_codes, forced, banned) -> int:
+    def step(self, frame, caller_codes, forced, banned, elle_codes=None) -> int:
         from textvocab import PAD_ID
 
-        self._forced, self._banned, self._last_text = forced, list(banned), None
-        codes = self.silence if caller_codes is None else \
-            torch.as_tensor(np.asarray(caller_codes), device=self.device).view(1, -1, 1)
+        self._forced, self._banned, self._last_text, self._probe = forced, list(banned), None, None
         if self.flavor == "kyutai":
+            # Kyutai's LMGen takes only the user's codes; it has no zero-token
+            # input, so -1 frames are fed as silence (unused path).
+            codes = self.silence if caller_codes is None or (np.asarray(caller_codes) < 0).any() else \
+                torch.as_tensor(np.asarray(caller_codes), device=self.device).view(1, -1, 1)
             out = self.lm_gen.step(codes)
             tk = self._last_text
+            if tk is None:
+                tk = forced if forced is not None else PAD_ID
         else:
+            # -1 goes in as -1: the zero embedding, exactly what forward_train
+            # saw on those frames (prompt, audio tail). Elle's codes are forced
+            # when given (prompt frames; teacher mode), otherwise sampled.
+            neg = torch.full((1, 8, 1), -1, dtype=torch.long, device=self.device)
+            codes = neg if caller_codes is None else \
+                torch.as_tensor(np.asarray(caller_codes, dtype=np.int64), device=self.device).view(1, -1, 1)
+            moshi = None if elle_codes is None else \
+                torch.as_tensor(np.asarray(elle_codes, dtype=np.int64), device=self.device).view(1, -1, 1)
             st = self.lm_gen._streaming_state
-            first = int(st.offset) == 0
-            out = self.lm_gen.step(input_tokens=codes, text_token=forced)
-            if first:
-                tk = None
-            else:
-                CT = st.cache.shape[2]
-                tk = int(st.cache[0, 0, (int(st.offset) - 1) % CT])
+            if int(st.offset) == 0:
+                raise RuntimeError("LMGen was not primed in start(); frame alignment would be off by one")
+            out = self.lm_gen.step(input_tokens=codes, moshi_tokens=moshi, text_token=forced)
+            CT = st.cache.shape[2]
+            tk = int(st.cache[0, 0, (int(st.offset) - 1) % CT])
         if out is not None:
-            self._codes.append(out[:, 1:9].detach())
-        if tk is None:
-            tk = forced if forced is not None else PAD_ID
+            c = out[:, 1:9].detach()
+            # Frames where Elle's codes were forced to -1 (the prompt) decode as silence.
+            self._codes.append(torch.where(c < 0, self.silence.to(c.dtype).expand_as(c), c))
+        if self.frame_stats is not None:
+            self.frame_stats.append(self._probe)
         return tk
 
     def finish(self) -> None:

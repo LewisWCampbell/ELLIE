@@ -47,9 +47,11 @@ class ScriptedGenerator(FrameGenerator):
         self.log = []
         self.seen_result = False
         self.caller = []
+        self.elle = []
 
-    def step(self, frame, caller_codes, forced, banned):
+    def step(self, frame, caller_codes, forced, banned, elle_codes=None):
         self.caller.append(None if caller_codes is None else int(caller_codes[0]))
+        self.elle.append(None if elle_codes is None else [int(x) for x in elle_codes])
         self.log.append((frame, forced, tuple(banned)))
         if forced is not None:
             if forced == self.tok.special_ids["</result>"]:
@@ -98,8 +100,11 @@ class ClosedLoopTest(unittest.TestCase):
             if t is None:
                 self.assertIn(tok.special_ids["<result id="], banned)
                 self.assertIn(tok.special_ids["</result>"], banned)
-        # caller codes come from the example; missing codes arrive as None
-        self.assertEqual(gen.caller[:4], [None, None, None, 5])
+        # caller codes come from the example, -1 (no audio) included: the model
+        # was trained on -1 there, so it must not be replaced by anything else
+        self.assertEqual(gen.caller[:4], [-1, -1, -1, 5])
+        # outside the prompt Elle's audio is the model's own (not forced)
+        self.assertTrue(all(e is None for e in gen.elle))
         # decoded and scored with the shared metrics: no premature claim
         evs = merge_events(episode(), decode_text_stream(out["text"], tok, 0))
         sc = M.score_episode(episode(), evs, claim_source="detected")
@@ -116,8 +121,8 @@ class ClosedLoopTest(unittest.TestCase):
 
     def test_backend_must_honour_forcing(self):
         class Rebel(ScriptedGenerator):
-            def step(self, frame, caller_codes, forced, banned):
-                return PAD_ID if forced is not None else super().step(frame, caller_codes, forced, banned)
+            def step(self, frame, caller_codes, forced, banned, elle_codes=None):
+                return PAD_ID if forced is not None else super().step(frame, caller_codes, forced, banned, elle_codes)
 
         tok = self.tok
         gen = Rebel(tok, tok.encode(CALL), [])
@@ -126,16 +131,80 @@ class ClosedLoopTest(unittest.TestCase):
 
     def test_prompt_frames(self):
         tok = self.tok
-        ex = dict(self.ex, text=np.array(tok.encode("hi") + [PAD_ID] * 158, dtype=np.int32),
+        audio = self.ex["audio"].copy()
+        audio[:, :2] = -1  # prepare.py: all 16 audio rows are -1 on prompt frames
+        ex = dict(self.ex, text=np.array(tok.encode("hi") + [PAD_ID] * 158, dtype=np.int32), audio=audio,
                   meta={"prompt_frames": 2, "frame_offset": -2})
         gen = ScriptedGenerator(tok, [], [])
         out = closed_loop(gen, tok, ex, episode(), {})
         self.assertEqual([t for _, t, _ in gen.log[:2]], tok.encode("hi"))  # forced by the loop
+        # The audio the model hears during the prompt is exactly the training
+        # input: -1 on both channels (Elle's forced, not generated).
+        self.assertEqual(gen.caller[:2], [-1, -1])
+        self.assertEqual(gen.elle[:2], [[-1] * 8, [-1] * 8])
+        self.assertIsNone(gen.elle[2])
+        # teacher mode forces Elle's recorded audio on every frame
+        gen_t = ScriptedGenerator(tok, [], [])
+        closed_loop(gen_t, tok, ex, episode(), {"elle_audio": "teacher"})
+        self.assertEqual(gen_t.elle[5], [5] * 8)
         gen2 = ScriptedGenerator(tok, [], [])
         gen2.native_prompt = True
         out2 = closed_loop(gen2, tok, ex, episode(), {})
         self.assertEqual(gen2.log[0][0], 2)  # the backend ran its own prompt; frames 0-1 skipped
         self.assertEqual(out["text"][:2], out2["text"][:2])
+
+
+class CallAttemptTest(unittest.TestCase):
+    """Every call the model starts is accounted for: a span that never closes,
+    or loses itself in padding, is reported (and does not block later calls)."""
+
+    def setUp(self):
+        self.tok = ChunkTokenizer.build([CALL, RESULT, "He's free then. Let me check."])
+        T = 400
+        self.ex = {"id": "ep_t", "episode_id": "ep_t", "text": np.full(T, PAD_ID, dtype=np.int32),
+                   "audio": np.full((16, T), 5, dtype=np.int32), "meta": {"prompt_frames": 0, "frame_offset": 0}}
+
+    def test_abandoned_call_then_good_call(self):
+        tok = self.tok
+        open_id = tok.special_ids["<tool>"]
+        partial = [open_id] + tok.encode('{"id":"c1","na')[:3] + [PAD_ID] * 5
+        before = [PAD_ID] * 3 + partial + [PAD_ID] * 3 + tok.encode(CALL)
+        gen = ScriptedGenerator(tok, before, [])
+        out = closed_loop(gen, tok, self.ex, episode(), {})
+        self.assertEqual(out["tool_opens"], 2)
+        self.assertEqual(len(out["tool_errors"]), 1)
+        self.assertIn("padding", out["tool_errors"][0]["error"])
+        self.assertEqual(len(out["calls"]), 1)  # <tool> was not left banned after the abort
+
+    def test_unclosed_call_is_reported_at_end(self):
+        tok = self.tok
+        open_id = tok.special_ids["<tool>"]
+        before = [PAD_ID] * 3 + [open_id] + tok.encode('{"id":"c1"')
+        gen = ScriptedGenerator(tok, before, [])
+        n = len(before)  # the stream ends mid-call (no padding after it)
+        ex = dict(self.ex, text=self.ex["text"][:n], audio=self.ex["audio"][:, :n])
+        out = closed_loop(gen, tok, ex, episode(), {})
+        self.assertEqual(out["tool_opens"], 1)
+        self.assertEqual(len(out["calls"]), 0)
+        (err,) = out["tool_errors"]
+        self.assertIn("still open", err["error"])
+        # decode_text_stream reports it too, as a failed call
+        evs = decode_text_stream(out["text"], tok, 0)
+        self.assertTrue(any(e["type"] == "tool_call" and e.get("error") for e in evs))
+
+    def test_tiny_generator_frame_stats(self):
+        import torch
+
+        from genloop import TinyFrameGenerator
+        from tiny_model import TinyDuplexLM
+        torch.manual_seed(0)
+        tok = self.tok
+        model = TinyDuplexLM(text_card=tok.base_card, card=16, dim=32, layers=1, heads=2, depth_dim=16, depth_layers=1)
+        model.resize_text_vocab(4)
+        ex = dict(self.ex, text=self.ex["text"][:20], audio=np.full((16, 20), 3, dtype=np.int32))
+        out = closed_loop(TinyFrameGenerator(model.eval()), tok, ex, episode(), {})
+        self.assertEqual(len(out["frame_stats"]), 20)
+        self.assertTrue(all(0.0 <= s["p_tool"] <= 1.0 for s in out["frame_stats"]))
 
 
 class StitchAndListenTest(unittest.TestCase):
