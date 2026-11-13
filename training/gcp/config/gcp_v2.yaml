@@ -1,0 +1,13 @@
+# The second run. Same audio as v1 (data/retimed.jsonl + audio/), re-encoded
+# with base_gpu.yaml's current text-stream settings: the dated PersonaPlex-style
+# prompt with its native silence/sine prefix, calls anchored to the start of the
+# line that announces them, window lead-in, float32 new-token rows, <tool>
+# weighted on its own, no unlikelihood. v1's data and checkpoints stay as they
+# were (gcp.yaml).
+extends: gcp.yaml
+
+run_dir: ${ELLE_WORK}/runs/elle_tools_v2
+
+data:
+  prepared_dir: ${ELLE_WORK}/runs/prepared_v2
+  plain_prepared_dir: ${ELLE_WORK}/runs/plain_v2

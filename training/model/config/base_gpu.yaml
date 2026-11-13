@@ -56,9 +56,22 @@ prepare:
     hf_repo: kyutai/moshiko-pytorch-bf16
     device: cuda
   # PersonaPlex keeps a system prompt pinned in context; train with the same one
-  # production will use (wrapped in <system> tags like PersonaPlex's server).
-  prompt_text: "<system> You work for Sam as his phone assistant and your name is Elle. You book intro calls. <system>"
-  prompt_pad_frames: 11
+  # production will use, in its own style ("You work for ... and your name is
+  # ... Information: ...", wrapped in <system> tags). {today} becomes the
+  # episode's date and time (prepare.prompt_text_for): without it the model
+  # cannot turn "Thursday at 3" into the date a booking needs.
+  prompt_text: "<system> You work for Lewis as his phone assistant and your name is Elle. Information: You answer questions about Lewis and book thirty-minute intro calls with him. Today is {today}. <system>"
+  # native: PersonaPlex's own conversation start (silence on Elle's channel, a
+  # sine tone on the caller's, 6 PAD frames before and after the prompt), which
+  # the base model was trained with. zero: all audio -1 (the first run).
+  prompt_audio: native
+  prompt_silence_frames: 6
+  prompt_pad_frames: 11               # zero layout only
+  # A call inside one of Elle's lines is written right after that line's words,
+  # so starting the call coincides with starting the "let me check" line.
+  anchor_calls_to_utterance: true
+  # Windows of long calls never open on a call: keep 8 s of lead-in.
+  window_guard_frames: 100
 
 train:
   backend_device: cuda
@@ -68,18 +81,25 @@ train:
   seq_frames: 1250
   num_threads: 8
   optim:
-    lr: 4.0e-6                        # moshi-finetune: 2e-6 recommended, 4e-6 in their example curve
-    new_token_lr: 1.0e-4              # new embedding rows start from scratch
+    # moshi-finetune's 2e-6..4e-6 assumes float32 master weights and LoRA on
+    # activations. Here LoRA is added to bfloat16 weights, which rounds away
+    # deltas smaller than ~|w|/512, so small learning rates mostly vanish.
+    # The pilot (gcp/config/pilot_*.yaml) compares 4e-6 and 2e-5.
+    lr: 2.0e-5
+    new_token_lr: 3.0e-4              # float32 rows (param_lora.SpliceRows)
     weight_decay: 0.1
     pct_start: 0.05
     betas: [0.9, 0.95]
     grad_clip: 1.0
-  negatives: unlikelihood             # exclude | unlikelihood | include (never include for real runs)
+  # exclude: the unlikelihood term was normalised per negative frame, so one
+  # suppressed <tool> outweighed ~300 positive ones; off until that is reworked.
+  negatives: exclude                  # exclude | unlikelihood | include (never include for real runs)
   unlikelihood_weight: 0.5
 
 loss:
   text_padding_weight: 0.5            # moshi-finetune default
-  special_token_weight: 2.0           # upweight <tool>/</tool> targets (rare, critical)
+  special_token_weight: 2.0           # upweight </tool> and result markers
+  tool_open_weight: 4.0               # <tool>: the decision to call, the scarcest target
   audio_weight: 1.0
   first_codebook_weight_multiplier: 100.0   # moshi-finetune default (semantic codebook)
   user_audio_weight: 0.0              # PersonaPlex depformer also predicts user codes (dep_q=16); UNVERIFIED whether to train them

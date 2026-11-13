@@ -37,7 +37,7 @@ from textvocab import SPECIAL_TOKENS, build_tokenizer  # noqa: E402
 
 
 def marker_report(cfg: dict, base: str, ckpt: str = None, split: str = "val", max_examples: int = 200,
-                  device: str = None) -> dict:
+                  device: str = None, limit_episodes: int = 0) -> dict:
     from train import build_model, eval_loss, latest_checkpoint, set_trainable
 
     device = device or cfg.get("train", {}).get("backend_device", "cuda" if torch.cuda.is_available() else "cpu")
@@ -53,6 +53,9 @@ def marker_report(cfg: dict, base: str, ckpt: str = None, split: str = "val", ma
     # trained to be suppressed, so they are not places <tool> should win).
     exs = [e for e in load_examples(resolve_path(cfg["data"]["prepared_dir"], base), split)
            if not e["meta"].get("negative")]
+    if limit_episodes:
+        from train import limit_to_episodes
+        exs = limit_to_episodes(exs, limit_episodes)
     open_id = new_ids[0]
     # Only examples that contain a <tool> target say anything about the decision.
     with_calls = [e for e in exs if (e["text"] == open_id).any()]
@@ -67,9 +70,11 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint")
     ap.add_argument("--split", default="val")
     ap.add_argument("--max-examples", type=int, default=200)
+    ap.add_argument("--limit-episodes", type=int, default=0, help="only the first N episodes (the pilot set)")
     args = ap.parse_args(argv)
     cfg, base = load_config(args.config)
-    rep = marker_report(cfg, base, args.checkpoint, args.split, args.max_examples)
+    rep = marker_report(cfg, base, args.checkpoint, args.split, args.max_examples,
+                        limit_episodes=args.limit_episodes)
     out_dir = os.path.join(resolve_path(cfg["run_dir"], base), "eval")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"markers_{os.path.basename(rep['checkpoint'].rstrip('/'))}.json")

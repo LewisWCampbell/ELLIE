@@ -68,6 +68,31 @@ If Spot stops the VM mid-run: `gcloud compute instances start elle-train
 itself. The audio steps (9 to 11) resume too, but not on their own: start the
 VM and rerun the same command.
 
+## The second run (v2)
+
+The first run's checkpoint made zero tool calls in evaluation. That came from
+the evaluation feeding the model different audio than training during the
+system prompt, now fixed and covered by `test_personaplex`.
+`diagnose.sh` re-evaluates that checkpoint. v2 also fixes what only a retrain
+can: the prompt has the date (and Lewis's name), PersonaPlex's own prompt
+layout, calls placed right after the line that announces them, float32 rows for
+the new tokens, `<tool>` weighted on its own, and no unlikelihood term. Same
+audio as v1; only the text stream is re-encoded (`gcp_v2.yaml`). Order:
+
+```
+VM  1. git pull
+    2. tmux new -d -s pilot 'bash ~/ELLE/training/gcp/pilot.sh'
+         encodes v2 (~1 h), then 200 steps on 32 calls at two learning rates,
+         each followed by markers.py and a closed-loop check; uploads
+         logs/pilot_*.log and shuts down
+    3. read the log. Go if a learning rate reaches <tool> accuracy >= 0.95 and
+       >= 80% of the expected calls in closed loop with no parse errors; put
+       that rate in base_gpu.yaml (train.optim.lr)
+    4. tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh'
+         skips the finished steps, trains v2 and evaluates it; the restart
+         job brings it back after Spot stops
+```
+
 ## Same project as Elle, separate identity
 
 Training runs in Elle's own project, where the GPU quota was granted, but the

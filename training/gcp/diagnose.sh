@@ -13,8 +13,10 @@
 source "$(dirname "$0")/_env.sh"
 set +e  # one failing step must not stop the rest, the upload or the shutdown
 N="${DIAG_EPISODES:-10}"
-CFG=training/gcp/config/gcp.yaml
-OUT="$ELLE_WORK/runs/elle_tools_v1/eval"
+# Defaults to the first run (v1); DIAG_CFG/DIAG_RUN point it at another.
+CFG="${DIAG_CFG:-training/gcp/config/gcp.yaml}"
+DRUN="${DIAG_RUN:-elle_tools_v1}"
+OUT="$ELLE_WORK/runs/$DRUN/eval"
 LOG="$HOME/diagnose.log"
 STAMP=$(date +%Y%m%d_%H%M)
 run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
@@ -31,5 +33,5 @@ run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kerne
   echo "=== done $(date)"
 } > "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/diagnose_$STAMP.log" || true
-gcloud storage rsync -r "$OUT" "$BUCKET/runs/elle_tools_v1/eval" || true
+gcloud storage rsync -r "$OUT" "$BUCKET/runs/$DRUN/eval" || true
 sudo shutdown -h +2

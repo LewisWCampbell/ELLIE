@@ -90,19 +90,25 @@ class MiniPersonaPlex(unittest.TestCase):
                 "first_codebook_weight_multiplier": 100.0}
         losses = compute_loss(out, batch, lcfg, new_ids, negatives="unlikelihood", ul_weight=0.5)
         self.assertTrue(torch.isfinite(losses["loss"]))
-        before = {id(p): p.detach().clone() for p in groups["new_tokens"]}
+        tables = {n: t.detach().clone() for n, t in self._base_tables(lm).items()}
+        before = [p.detach().clone() for p in groups["new_tokens"]]
         losses["loss"].backward()
         frozen_with_grad = [n for n, p in lm.named_parameters() if not p.requires_grad and p.grad is not None]
         self.assertEqual(frozen_with_grad, [])
+        # The new rows are float32 parameters of their own, one per table, 4 rows each.
+        self.assertEqual([(p.dtype, p.shape[0]) for p in groups["new_tokens"]], [(torch.float32, 4)] * 3)
+        self.assertTrue(all(p.grad is not None and p.grad.abs().sum() > 0 for p in groups["new_tokens"]))
 
         # Exactly as train.py builds it: no weight decay on the new-token rows.
         opt = torch.optim.AdamW([{"params": groups["lora"], "lr": 1e-3, "weight_decay": 0.1},
                                  {"params": groups["new_tokens"], "lr": 1e-3, "weight_decay": 0.0}],
                                 betas=(0.9, 0.95), eps=1e-8)
         opt.step()
-        for w in groups["new_tokens"]:
-            old = [i for i in range(w.shape[0]) if i not in new_ids]
-            self.assertTrue(torch.equal(w.detach()[old], before[id(w)][old]), "pretrained vocabulary must not move")
+        for n, t in self._base_tables(lm).items():
+            self.assertTrue(torch.equal(t[:new_ids[0]], tables[n][:new_ids[0]]), f"{n}: pretrained vocabulary must not move")
+        self.assertTrue(all(not torch.equal(p, b) for p, b in zip(groups["new_tokens"], before)), "new rows must train")
+        # ...and every read of the table sees them.
+        self.assertTrue(torch.equal(lm.text_emb.weight[new_ids].float(), groups["new_tokens"][0].detach()))
 
         sd = mb.trainable_state_dict(lm, new_ids)
         lm.eval()
@@ -112,6 +118,8 @@ class MiniPersonaPlex(unittest.TestCase):
         fresh, _tok2, ids2, _g = mb.load_real_model(self.cfg, device="cpu")
         mb.load_trainable_state_dict(fresh.lm, sd, ids2)
         self.assertGreater(merge_param_lora(fresh.lm), 0)
+        from param_lora import merge_spliced_rows
+        self.assertEqual(merge_spliced_rows(fresh.lm), 3)
         self.assertEqual(sum(1 for m in fresh.lm.modules() if parametrize.is_parametrized(m)), 0)
         fresh.lm.eval()
         with torch.no_grad():
@@ -120,7 +128,44 @@ class MiniPersonaPlex(unittest.TestCase):
             ok = ~torch.isnan(a)
             self.assertTrue(torch.allclose(a[ok], b[ok], atol=1e-4), "merged model must match the trained one")
 
+    @staticmethod
+    def _base_tables(lm):
+        from torch.nn.utils import parametrize
+        out = {}
+        for n in ("text_emb", "depformer_text_emb", "text_linear"):
+            m = getattr(lm, n)
+            out[n] = m.parametrizations.weight.original if parametrize.is_parametrized(m, "weight") else m.weight
+        return out
+
+    def test_native_prompt_codes_match_personaplex(self):
+        from prepare import NATIVE_AGENT_SILENCE, NATIVE_USER_SINE
+        self.assertEqual(NATIVE_AGENT_SILENCE, moshi_lm.SILENCE_TOKENS.tolist())
+        self.assertEqual(NATIVE_USER_SINE, moshi_lm.SINE_TOKENS.tolist())
+
+    def test_first_run_checkpoint_still_loads(self):
+        """v1 checkpoints saved the new rows as bfloat16 slices of the tables;
+        they load into the float32 rows (and a LoRA mismatch is an error)."""
+        import moshi_backend as mb
+
+        adapter, _tok, new_ids, groups = mb.load_real_model(self.cfg, device="cpu")
+        sd = mb.trainable_state_dict(adapter.lm, new_ids)
+        for k in [k for k in sd if k.startswith("new_tokens.")]:
+            sd[k] = (torch.randn_like(sd[k]) * 0.01).to(torch.bfloat16)
+        fresh, _t, ids2, g2 = mb.load_real_model(self.cfg, device="cpu")
+        mb.load_trainable_state_dict(fresh.lm, sd, ids2)
+        self.assertTrue(torch.equal(g2["new_tokens"][0].detach(), sd["new_tokens.text_emb"].float()))
+        bad = {k: v for k, v in sd.items() if not k.endswith("lora_A")}
+        with self.assertRaises(AssertionError):
+            mb.load_trainable_state_dict(fresh.lm, bad, ids2)
+
+    def test_streaming_generator_matches_training_forward_native_prompt(self):
+        from prepare import NATIVE_AGENT_SILENCE, NATIVE_USER_SINE
+        self._parity(prompt=(NATIVE_AGENT_SILENCE, NATIVE_USER_SINE))
+
     def test_streaming_generator_matches_training_forward(self):
+        self._parity(prompt=None)
+
+    def _parity(self, prompt):
         """The live generator must see exactly what training saw. Drive the real
         MoshiFrameGenerator frame by frame with an example's own text and audio
         (prompt frames with -1 audio, as prepare.py writes them) and compare the
@@ -149,7 +194,11 @@ class MiniPersonaPlex(unittest.TestCase):
         text[P + 5] = new_ids[0]
         text[P + 9] = new_ids[1]
         audio = torch.randint(0, self.mini["card"], (16, T), generator=g)
-        audio[:, :P] = -1  # prompt frames: zero embedding on all 16 streams
+        if prompt is None:
+            audio[:, :P] = -1  # prompt frames, zero layout: zero embedding on all 16 streams
+        else:  # native layout: Mimi silence on Elle's channel, sine on the caller's
+            audio[:8, :P] = torch.tensor(prompt[0])[:, None]
+            audio[8:, :P] = torch.tensor(prompt[1])[:, None]
         audio[8:, T - 3:] = -1  # caller audio ran out (Mimi tail)
         with torch.no_grad():
             ref = lm.forward_train(torch.cat([text[None, None], audio[None]], 1))

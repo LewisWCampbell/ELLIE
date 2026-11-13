@@ -39,8 +39,17 @@ step() {
 step synth
 step retime
 step assemble
-step mimi
-step plain
+# The encoding steps depend on the config (prompt, layout), so their markers do too.
+step_cfg() {
+  STEP="$1"
+  if [ -f "$ELLE_WORK/.done_${1}_$CFG_TAG" ]; then echo "run_all: $1 ($CFG_TAG) already done, skipping"; return; fi
+  echo "run_all: $1 ($CFG_TAG) starting $(date)"
+  bash "$REPO/training/gcp/prepare.sh" "$1"
+  touch "$ELLE_WORK/.done_${1}_$CFG_TAG"
+  echo "run_all: $1 ($CFG_TAG) finished $(date)"
+}
+step_cfg mimi
+step_cfg plain
 
 STEP=train
 rm -f "$ELLE_WORK/.pipeline"

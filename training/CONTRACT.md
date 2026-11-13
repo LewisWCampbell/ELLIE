@@ -72,6 +72,31 @@ The tool-call span is emitted by the model on Elle's text stream at the event's
 its tokens are masked out of the loss. These four marker strings are added to
 the tokenizer as special tokens: `<tool>`, `</tool>`, `<result id=`, `</result>`.
 
+### Where a call sits, and what comes before the conversation (v2)
+
+A call that the episode places inside one of Elle's lines ("Let me check...")
+is written right after that line's words, which the text stream emits from the
+line's first word (text runs ahead of audio, as in Moshi). Starting the call
+then coincides with starting the line that announces it; at its literal time
+it would be a one-frame guess in the middle of the line that the model cannot
+learn. `prepare.anchor_calls_to_utterance`.
+
+Every training window starts with the system prompt, in PersonaPlex's own
+style and layout: 6 PAD frames, the prompt tokens, 6 PAD frames, with Mimi
+silence codes on Elle's channel and a sine tone on the caller's
+(`prepare.prompt_audio: native`, the codes in PersonaPlex's `lm.py`). The
+prompt carries the call's date and time, since a booking needs an absolute
+date and the caller says "Thursday at 3":
+
+```
+<system> You work for Lewis as his phone assistant and your name is Elle. Information: You answer questions about Lewis and book thirty-minute intro calls with him. Today is Friday, March 5, 2027, 12:28 PM Pacific Time (UTC-08:00). <system>
+```
+
+Anything that runs the model (evaluation, a future server) must reproduce this
+block exactly, frame for frame: the evaluation forces the example's own prompt
+frames, text and audio, and `test_personaplex` checks that the streaming
+generator then computes the same probabilities as training.
+
 ## Spans take time (added after the first dry run)
 
 The model's text stream carries one token per 80 ms frame (12.5 Hz), so a tool

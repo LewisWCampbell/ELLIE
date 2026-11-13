@@ -1,0 +1,19 @@
+# Pilot: can the real 7B learn to start calls on a small set at this learning
+# rate, before the full run is allowed to start? 32 conversations, 200 steps,
+# then markers.py and a closed-loop evaluation on the same conversations.
+# Go: <tool> accuracy >= 0.95 teacher-forced, and >= 80% of the expected calls
+# made in closed loop with no parse errors.
+extends: gcp_v2.yaml
+
+run_dir: ${ELLE_WORK}/runs/pilot_lr4e-6
+
+train:
+  limit_episodes: 32
+  max_steps: 200
+  optim:
+    lr: 4e-6
+
+eval:
+  every_steps: 50
+  ckpt_every_steps: 200
+  max_episodes: 32

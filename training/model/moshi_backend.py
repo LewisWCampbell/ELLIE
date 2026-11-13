@@ -156,14 +156,25 @@ def load_real_model(cfg: Dict[str, Any], device: str = "cuda"):  # pragma: no co
                 nn.init.kaiming_uniform_(m.weight, a=5 ** 0.5)
             elif n.endswith("lora_B"):
                 nn.init.zeros_(m.weight)
+    old_card = int(lm.text_card)
     new_ids = resize_moshi_text_vocab(lm, int(cfg.get("special_tokens_count", 4)))
     groups: Dict[str, List[nn.Parameter]] = {"lora": [], "new_tokens": []}
     for n, p in lm.named_parameters():
         if "lora_A" in n or "lora_B" in n:
             p.requires_grad = True
             groups["lora"].append(p)
+    fp32_rows = not use_kyutai_lora and cfg.get("model", {}).get("new_rows_fp32", True)
+    pieces = _marker_pieces(tokenizer_path, old_card, len(new_ids)) if fp32_rows else None
     for mod in (lm.text_emb, getattr(lm, "depformer_text_emb", None), lm.text_linear):
         if mod is None:
+            continue
+        if fp32_rows:
+            # float32 rows spliced into the frozen bfloat16 table (param_lora.SpliceRows),
+            # each marker starting from the mean of the pieces that spell it.
+            from param_lora import splice_rows
+            W = mod.weight
+            init = torch.stack([W[ids].float().mean(0) if ids else W[:old_card].float().mean(0) for ids in pieces])
+            groups["new_tokens"].append(splice_rows(mod, "weight", new_ids, init))
             continue
         w = mod.frozen_W.weight if hasattr(mod, "frozen_W") else mod.weight
         w.requires_grad = True
@@ -173,6 +184,19 @@ def load_real_model(cfg: Dict[str, Any], device: str = "cuda"):  # pragma: no co
     adapter = MoshiAdapter(lm)
     adapter.info = info  # CheckpointInfo: get_mimi() for evaluation / listening
     return adapter, tokenizer_path, new_ids, groups
+
+
+def _marker_pieces(tokenizer_path: str, base_card: int, n: int) -> List[List[int]]:
+    """For each new marker, the ids of the SentencePiece pieces that spell it
+    literally (e.g. "<", "tool", ">"), to initialise its rows."""
+    from textvocab import SPECIAL_TOKENS
+    try:
+        import sentencepiece  # type: ignore
+        sp = sentencepiece.SentencePieceProcessor(model_file=tokenizer_path)
+        assert sp.get_piece_size() == base_card, (sp.get_piece_size(), base_card)
+        return [[i for i in sp.encode(m) if 0 <= i < base_card] for m in SPECIAL_TOKENS[:n]]
+    except (ImportError, OSError, RuntimeError):
+        return [[] for _ in range(n)]  # fall back to the mean row
 
 
 # --- checkpoints of the real model -------------------------------------------------
@@ -185,25 +209,50 @@ def _row_tensors(lm: nn.Module) -> Dict[str, Optional[torch.Tensor]]:
             "text_linear.weight": target.weight, "text_linear.bias": getattr(target, "bias", None)}
 
 
+def _row_modules(lm: nn.Module) -> Dict[str, Optional[nn.Module]]:
+    lin = lm.text_linear
+    return {"text_emb": lm.text_emb, "depformer_text_emb": getattr(lm, "depformer_text_emb", None),
+            "text_linear.weight": lin.frozen_W if hasattr(lin, "frozen_W") else lin}
+
+
 def trainable_state_dict(lm: nn.Module, new_ids: List[int]) -> Dict[str, torch.Tensor]:
     """LoRA A/B plus the new tokens' rows: everything a checkpoint must carry on
-    top of the frozen base (same layout as tiny_model.trainable_state_dict)."""
+    top of the frozen base (same layout as tiny_model.trainable_state_dict).
+    Rows kept in float32 (SpliceRows) are saved in float32."""
+    from param_lora import spliced_rows
+
     sd = {k: v.detach().cpu() for k, v in lm.state_dict().items() if "lora_A" in k or "lora_B" in k}
     ids = torch.tensor(new_ids, dtype=torch.long)
+    mods = _row_modules(lm)
     for name, w in _row_tensors(lm).items():
-        if w is not None:
-            sd[f"new_tokens.{name}"] = w.detach()[ids.to(w.device)].cpu()
+        if w is None:
+            continue
+        rows = spliced_rows(mods.get(name)) if name in mods else None
+        sd[f"new_tokens.{name}"] = (rows.detach() if rows is not None else w.detach()[ids.to(w.device)]).cpu()
     return sd
 
 
 @torch.no_grad()
 def load_trainable_state_dict(lm: nn.Module, sd: Dict[str, torch.Tensor], new_ids: List[int]) -> None:
+    """Inverse of trainable_state_dict. Checks that every LoRA tensor of the
+    model is in the file (a silent partial load would evaluate the base model)."""
+    from param_lora import spliced_rows
+
     lora = {k: v for k, v in sd.items() if not k.startswith("new_tokens.")}
+    want = {k for k in lm.state_dict() if "lora_A" in k or "lora_B" in k}
+    assert want == set(lora), ("LoRA tensors differ between model and checkpoint",
+                               sorted(want - set(lora))[:3], sorted(set(lora) - want)[:3])
     _missing, unexpected = lm.load_state_dict(lora, strict=False)
     assert not unexpected, unexpected
+    mods = _row_modules(lm)
     for name, w in _row_tensors(lm).items():
         key = f"new_tokens.{name}"
-        if w is not None and key in sd:
+        if w is None or key not in sd:
+            continue
+        rows = spliced_rows(mods.get(name)) if name in mods else None
+        if rows is not None:
+            rows.copy_(sd[key].to(rows))
+        else:
             w[torch.tensor(new_ids, device=w.device)] = sd[key].to(w)
 
 
@@ -233,8 +282,9 @@ def load_for_inference(cfg: Dict[str, Any], ckpt_dir: str, device: str = "cuda")
     lm = adapter.lm
     load_trainable_state_dict(lm, torch.load(os.path.join(ckpt_dir, "trainable.pt"), map_location=device), new_ids)
     merge_foreign_lora(lm)
-    from param_lora import merge_param_lora
+    from param_lora import merge_param_lora, merge_spliced_rows
     merge_param_lora(lm)
+    merge_spliced_rows(lm)
     for p in lm.parameters():
         p.requires_grad = False
     lm.eval()

@@ -26,7 +26,7 @@ them for the backward pass, roughly 13 GB more on the 7B model.
 from __future__ import annotations
 
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -88,5 +88,59 @@ def merge_param_lora(model: nn.Module) -> int:
         for attr in list(mod.parametrizations.keys()):
             if any(isinstance(p, LoRAWeight) for p in mod.parametrizations[attr]):
                 parametrize.remove_parametrizations(mod, attr, leave_parametrized=True)
+                n += 1
+    return n
+
+
+# --- new vocabulary rows kept in float32 -------------------------------------------
+
+class SpliceRows(nn.Module):
+    """Parametrization: W -> W with rows `ids` replaced by float32 parameters.
+
+    The model's tables are bfloat16. Adam steps on a bfloat16 tensor lose any
+    update smaller than half its last bit (about |w|/512), so the four new
+    tool-token rows of the first run could barely move once they had grown a
+    little, and froze as the learning rate decayed. Kyutai's trainer avoids this
+    with float32 master copies; this does the same for just these rows: they
+    live here in float32, the frozen table stays bfloat16, and every read of the
+    weight splices them in (gradients reach only the rows)."""
+
+    def __init__(self, ids: List[int], rows: torch.Tensor):
+        super().__init__()
+        self.register_buffer("ids", torch.tensor(ids, dtype=torch.long, device=rows.device), persistent=False)
+        self.rows = nn.Parameter(rows.detach().float().clone())
+
+    def forward(self, W: torch.Tensor) -> torch.Tensor:
+        return W.index_put((self.ids,), self.rows.to(W.dtype))
+
+
+def splice_rows(mod: nn.Module, attr: str, ids: List[int], rows: torch.Tensor) -> nn.Parameter:
+    """Attach SpliceRows to `mod.<attr>` (frozen); returns the trainable rows."""
+    getattr(mod, attr).requires_grad = False
+    p = SpliceRows(ids, rows)
+    parametrize.register_parametrization(mod, attr, p)
+    return p.rows
+
+
+def spliced_rows(mod: nn.Module, attr: str = "weight") -> Optional[nn.Parameter]:
+    if mod is None or not parametrize.is_parametrized(mod, attr):
+        return None
+    for p in mod.parametrizations[attr]:
+        if isinstance(p, SpliceRows):
+            return p.rows
+    return None
+
+
+@torch.no_grad()
+def merge_spliced_rows(model: nn.Module) -> int:
+    """Bake SpliceRows into the weights (for streaming inference). Returns the number merged."""
+    n = 0
+    for mod in list(model.modules()):
+        if not parametrize.is_parametrized(mod):
+            continue
+        for attr in list(mod.parametrizations.keys()):
+            if any(isinstance(p, SpliceRows) for p in mod.parametrizations[attr]):
+                parametrize.remove_parametrizations(mod, attr, leave_parametrized=True)
+                getattr(mod, attr).requires_grad = False
                 n += 1
     return n

@@ -176,7 +176,8 @@ def bad_event_indices(ep: dict) -> set:
     return bad
 
 
-def build_items(segments: List[dict], tok: TextTokenizer, alignment: Optional[dict] = None) -> List[dict]:
+def build_items(segments: List[dict], tok: TextTokenizer, alignment: Optional[dict] = None,
+                anchor_calls: bool = False) -> List[dict]:
     """Segments -> placement items (one per word, one per span)."""
     items: List[dict] = []
     words: List[Tuple[str, float, float]] = []
@@ -193,9 +194,25 @@ def build_items(segments: List[dict], tok: TextTokenizer, alignment: Optional[di
         if ids:
             items.append({"kind": "word", "t": start, "end": end, "tokens": ids, "loss": True,
                           "atomic": False, "text": w, "event_index": ev_idx})
+    first_word = {}
+    for it in items:
+        ev = it.get("event_index")
+        if ev is not None and (ev not in first_word or it["t"] < first_word[ev]):
+            first_word[ev] = it["t"]
     for s in segments:
         if s["kind"] in ("tool", "result"):
-            items.append({"kind": s["kind"], "t": s["t"], "end": None, "tokens": tok.encode(s["text"]),
+            t = s["t"]
+            if anchor_calls and s["kind"] == "tool":
+                # A call that falls inside one of Elle's utterances ("Let me
+                # check...") is written right after that utterance's words, which
+                # place_items flushes from its first word. The decision to call
+                # then coincides with the decision to say the pre-line, instead of
+                # landing on a random frame in the middle of it (a one-frame
+                # timing guess the model cannot learn).
+                ev = _event_at(segments, s["t"])
+                if ev is not None and ev in first_word and first_word[ev] < t:
+                    t = first_word[ev] + 1e-3
+            items.append({"kind": s["kind"], "t": t, "end": None, "tokens": tok.encode(s["text"]),
                           "loss": bool(s["loss"]), "atomic": True, "text": s["text"], "id": s.get("id"),
                           "event_index": s.get("event_index")})
     # Stable chronological order; at equal times a span goes after the word that
@@ -339,8 +356,11 @@ def episode_duration(ep: dict) -> float:
     return end
 
 
-def choose_windows(T: int, max_frames: int, spans: List[dict]) -> List[Tuple[int, int]]:
-    """Cut [0, T) into windows <= max_frames, never inside a span."""
+def choose_windows(T: int, max_frames: int, spans: List[dict], guard: int = 0) -> List[Tuple[int, int]]:
+    """Cut [0, T) into windows <= max_frames, never inside a span. With
+    `guard`, a cut also keeps `guard` frames of lead-in before any span that
+    starts near it, so the next window does not open on a call with none of
+    the conversation that led to it (when the window stays at least half full)."""
     out, a = [], 0
     while a < T:
         b = min(T, a + max_frames)
@@ -348,9 +368,66 @@ def choose_windows(T: int, max_frames: int, spans: List[dict]) -> List[Tuple[int
             for s in spans:
                 if s["start_frame"] < b < s["end_frame"] and s["start_frame"] > a:
                     b = s["start_frame"]
+            if guard:
+                near = [s["start_frame"] for s in spans if b <= s["start_frame"] < b + guard]
+                if near and b - guard > a + max_frames // 2:
+                    b = b - guard
+                    for s in spans:  # the moved cut must not land inside a span either
+                        if s["start_frame"] < b < s["end_frame"]:
+                            b = s["start_frame"]
         out.append((a, b))
         a = b
     return out
+
+
+# PersonaPlex's own conversation-start codes (moshi/models/lm.py SILENCE_TOKENS /
+# SINE_TOKENS): during its system prompt the agent channel carries Mimi silence
+# and the user channel a sine tone. Copied here so preparing data does not need
+# the model package; test_personaplex checks they still match.
+NATIVE_AGENT_SILENCE = [948, 243, 1178, 546, 1736, 1030, 1978, 2008]
+NATIVE_USER_SINE = [430, 1268, 381, 1611, 1095, 1495, 56, 472]
+
+
+def prompt_text_for(ep: dict, template: str) -> str:
+    """The system prompt for one episode. `{today}` becomes the episode's own
+    date and time (ep["now"]), so the model can turn "Thursday at 3" into a
+    date: without it, every date argument is a guess."""
+    if "{today}" not in template:
+        return template
+    from datetime import datetime
+
+    now = datetime.fromisoformat(ep["now"])
+    off = now.utcoffset()
+    mins = int(off.total_seconds() // 60) if off is not None else 0
+    sign = "+" if mins >= 0 else "-"
+    zone = f"UTC{sign}{abs(mins) // 60:02d}:{abs(mins) % 60:02d}"
+    hour = now.hour % 12 or 12
+    today = (f"{now.strftime('%A')}, {now.strftime('%B')} {now.day}, {now.year}, "
+             f"{hour}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'} Pacific Time ({zone})")
+    return template.replace("{today}", today)
+
+
+def prompt_block(ep: dict, pcfg: dict, tok: TextTokenizer) -> Tuple[np.ndarray, np.ndarray]:
+    """(text [P], audio [16, P]) forced at the start of every window.
+
+    prompt_audio "native" (PersonaPlex's layout, what the base model was trained
+    with): `prompt_silence_frames` PAD frames, the prompt tokens, the same PAD
+    frames again; Elle's channel carries Mimi silence codes and the caller's a
+    sine tone throughout. "zero": prompt then `prompt_pad_frames` PAD, all audio
+    -1 (the zero embedding); what the first run used."""
+    if not pcfg.get("prompt_text"):
+        return np.zeros(0, dtype=np.int64), np.zeros((2 * N_CODEBOOKS_PER_CHANNEL, 0), dtype=np.int64)
+    ids = tok.encode_plain(prompt_text_for(ep, pcfg["prompt_text"]))
+    if pcfg.get("prompt_audio", "zero") == "native":
+        k = int(pcfg.get("prompt_silence_frames", 6))
+        text = [PAD_ID] * k + ids + [PAD_ID] * k
+        audio = np.empty((2 * N_CODEBOOKS_PER_CHANNEL, len(text)), dtype=np.int64)
+        audio[:N_CODEBOOKS_PER_CHANNEL] = np.array(NATIVE_AGENT_SILENCE, dtype=np.int64)[:, None]
+        audio[N_CODEBOOKS_PER_CHANNEL:] = np.array(NATIVE_USER_SINE, dtype=np.int64)[:, None]
+        return np.array(text, dtype=np.int64), audio
+    P = len(ids) + int(pcfg.get("prompt_pad_frames", 11))
+    text = np.array(ids + [PAD_ID] * (P - len(ids)), dtype=np.int64)
+    return text, np.full((2 * N_CODEBOOKS_PER_CHANNEL, P), ZERO_TOKEN_ID, dtype=np.int64)
 
 
 def prepare_episode(ep: dict, cfg: dict, tok: TextTokenizer, base_dir: str = ".") -> List[Dict[str, Any]]:
@@ -371,7 +448,7 @@ def prepare_episode(ep: dict, cfg: dict, tok: TextTokenizer, base_dir: str = "."
         audio_dir = resolve_path(acfg["audio_dir"], base_dir)
         wav_path = os.path.join(audio_dir, f"{ep['id']}.wav")
         alignment = load_alignment(os.path.splitext(wav_path)[0] + ".json")
-    items = build_items(segments, tok, alignment)
+    items = build_items(segments, tok, alignment, anchor_calls=bool(pcfg.get("anchor_calls_to_utterance", False)))
     # Place with room to spare, then trim: queued tokens are never dropped.
     total_tokens = sum(len(it["tokens"]) for it in items)
     placed = place_items(items, T + total_tokens + 2, frozenset(bad_event_indices(ep)))
@@ -400,14 +477,13 @@ def prepare_episode(ep: dict, cfg: dict, tok: TextTokenizer, base_dir: str = "."
     # start of every window, loss-masked, no audio. UNVERIFIED that this matches
     # how PersonaPlex was trained; its server forces `<system> ... <system>` text
     # tokens (and a voice prompt) before the conversation.
-    prompt_ids = tok.encode_plain(pcfg["prompt_text"]) if pcfg.get("prompt_text") else []
-    P = len(prompt_ids) + (int(pcfg.get("prompt_pad_frames", 11)) if prompt_ids else 0)
-    pre_text = np.array(prompt_ids + [PAD_ID] * (P - len(prompt_ids)), dtype=np.int64)
+    pre_text, pre_audio = prompt_block(ep, pcfg, tok)
+    P = len(pre_text)
     zeros = np.zeros(P, dtype=np.uint8)
-    pre_audio = np.full((2 * N_CODEBOOKS_PER_CHANNEL, P), ZERO_TOKEN_ID, dtype=np.int64)
 
     examples = []
-    for w, (a, b) in enumerate(choose_windows(T, max_frames - P, placed["spans"])):
+    for w, (a, b) in enumerate(choose_windows(T, max_frames - P, placed["spans"],
+                                              guard=int(pcfg.get("window_guard_frames", 0)))):
         spans = [dict(s, start_frame=s["start_frame"] - a + P, end_frame=s["end_frame"] - a + P,
                       nominal_frame=s["nominal_frame"] - a + P)
                  for s in placed["spans"] if a <= s["start_frame"] < b]

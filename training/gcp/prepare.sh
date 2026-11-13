@@ -32,20 +32,24 @@ case "${1:-}" in
       --cache "$ELLE_WORK/clips" --out "$ELLE_WORK/audio" \
       --delete-clips --chunk 500 "${LIMIT_ARGS[@]}" ;;
   mimi)
-    python3 training/model/prepare.py --config training/gcp/config/gcp.yaml ;;
+    python3 training/model/prepare.py --config "$ELLE_CFG" ;;
   plain)
     # The plain-conversation set (no tools) goes through the same voice
     # pipeline as the tool data, so it has real audio too.
     D="$ELLE_WORK/data"
-    [ -f "$D/plain_episodes.jsonl" ] || python3 training/model/plain.py episodes \
-      --n-train 2000 --n-val 200 --out "$D/plain_episodes.jsonl"
-    "$TTS" training/data/render_audio.py synth "$D/plain_episodes.jsonl" \
-      --cache "$ELLE_WORK/clips_plain" --out "$D/plain_measured.jsonl" --backend kokoro --workers "${WORKERS:-6}"
-    python3 training/model/prepare.py --config training/gcp/config/smoke.yaml \
-      --episodes "$D/plain_measured.jsonl" --out "$ELLE_WORK/runs/plain_zero" --write-retimed "$D/plain_retimed.jsonl"
-    "$TTS" training/data/render_audio.py assemble "$D/plain_retimed.jsonl" \
-      --cache "$ELLE_WORK/clips_plain" --out "$ELLE_WORK/audio" --delete-clips --chunk 500
-    python3 training/model/plain.py synth --config training/gcp/config/gcp.yaml --episodes "$D/plain_retimed.jsonl" ;;
+    # Voiced once (v1 did it under the marker .done_plain), reused by every run.
+    if [ ! -f "$ELLE_WORK/.done_plain_audio" ] && [ ! -f "$ELLE_WORK/.done_plain" ]; then
+      [ -f "$D/plain_episodes.jsonl" ] || python3 training/model/plain.py episodes \
+        --n-train 2000 --n-val 200 --out "$D/plain_episodes.jsonl"
+      "$TTS" training/data/render_audio.py synth "$D/plain_episodes.jsonl" \
+        --cache "$ELLE_WORK/clips_plain" --out "$D/plain_measured.jsonl" --backend kokoro --workers "${WORKERS:-6}"
+      python3 training/model/prepare.py --config training/gcp/config/smoke.yaml \
+        --episodes "$D/plain_measured.jsonl" --out "$ELLE_WORK/runs/plain_zero" --write-retimed "$D/plain_retimed.jsonl"
+      "$TTS" training/data/render_audio.py assemble "$D/plain_retimed.jsonl" \
+        --cache "$ELLE_WORK/clips_plain" --out "$ELLE_WORK/audio" --delete-clips --chunk 500
+      touch "$ELLE_WORK/.done_plain_audio"
+    fi
+    python3 training/model/plain.py synth --config "$ELLE_CFG" --episodes "$D/plain_retimed.jsonl" ;;
   *)
     echo "usage: bash prepare.sh check|synth|retime|assemble|mimi|plain"; exit 2 ;;
 esac

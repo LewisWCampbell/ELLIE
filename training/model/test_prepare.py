@@ -134,6 +134,52 @@ class AlignmentTest(unittest.TestCase):
         self.assertTrue((ex["audio"][:, :P] == -1).all())
         self.assertEqual(ex["frame_offset"], -P)
 
+    def test_native_prompt_layout_and_date(self):
+        from prepare import NATIVE_AGENT_SILENCE, NATIVE_USER_SINE
+        cfg = copy.deepcopy(CFG)
+        cfg["prepare"].update(prompt_text="<system> Elle. Today is {today}. <system>", prompt_audio="native",
+                              prompt_silence_frames=6)
+        ep = dict(self.eps["ep_fx_005"], now="2026-11-03T14:05:00-08:00")
+        ex = prepare_episode(ep, cfg, self.tok)[0]
+        P = ex["prompt_frames"]
+        self.assertTrue((ex["text"][:6] == PAD_ID).all() and (ex["text"][P - 6:P] == PAD_ID).all())
+        self.assertEqual(ex["audio"][:8, 0].tolist(), NATIVE_AGENT_SILENCE)
+        self.assertEqual(ex["audio"][8:, P - 1].tolist(), NATIVE_USER_SINE)
+        self.assertFalse(ex["loss_mask"][:P].any() or ex["audio_mask"][:P].any())
+        from prepare import prompt_text_for
+        self.assertEqual(prompt_text_for(ep, "Today is {today}."),
+                         "Today is Tuesday, November 3, 2026, 2:05 PM Pacific Time (UTC-08:00).")
+        self.assertEqual(prompt_text_for(dict(ep, now="2026-07-04T00:30:00-07:00"), "{today}"),
+                         "Saturday, July 4, 2026, 12:30 AM Pacific Time (UTC-07:00)")
+
+    def test_calls_anchor_to_the_line_that_announces_them(self):
+        tok = self.tok
+        segs = [{"kind": "speech", "t": 1.0, "dur": 1.6, "text": "let me check that", "loss": True, "event_index": 0},
+                {"kind": "tool", "t": 1.9, "dur": None, "text": '<tool>{"id":"c1","name":"x","args":{}}</tool>',
+                 "loss": True, "id": "c1", "event_index": 1}]
+        ids = tok.special_ids
+        for anchor in (False, True):
+            placed = place_items(build_items(segs, tok, anchor_calls=anchor), 120)
+            text = placed["text"].tolist()
+            start = text.index(ids[TOOL_OPEN])
+            words_end = max(i for i, t in enumerate(text[:start]) if t not in (PAD_ID, EPAD_ID))
+            if anchor:
+                # the whole line is written first, then the call right after it,
+                # earlier than the call's nominal frame
+                self.assertEqual(start, words_end + 1)
+                self.assertLess(start, seconds_to_frame(1.9))
+            else:
+                self.assertGreaterEqual(start, seconds_to_frame(1.9))
+
+    def test_window_guard_keeps_lead_in_before_calls(self):
+        from prepare import choose_windows
+        spans = [{"start_frame": 110, "end_frame": 140}]
+        self.assertEqual(choose_windows(300, 120, spans), [(0, 110), (110, 230), (230, 300)])
+        w = choose_windows(300, 120, spans, guard=40)
+        self.assertEqual(w[0], (0, 70))           # cut 40 frames before the call at 110
+        self.assertTrue(all(not (s["start_frame"] < b < s["end_frame"]) for _, b in w for s in spans))
+        self.assertEqual(choose_windows(300, 120, spans, guard=100)[0], (0, 110))  # would leave the window under half full
+
 
 class SerializerTest(unittest.TestCase):
     def test_dataset_serializer_agrees_with_contract(self):

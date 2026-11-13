@@ -110,7 +110,11 @@ def compute_loss(model_out: Tuple, batch: Dict[str, torch.Tensor], lcfg: dict, s
         is_special = torch.zeros_like(text, dtype=torch.bool)
         for s in special_ids:
             is_special |= text == s
+        w_plain = w
         w = torch.where(is_special, w * float(lcfg.get("special_token_weight", 1.0)), w)
+        if lcfg.get("tool_open_weight") is not None:
+            # <tool> is the one scarce decision (about 0.2% of frames): weight it on its own.
+            w = torch.where(text == special_ids[0], w_plain * float(lcfg["tool_open_weight"]), w)
     tgt = text.clamp(min=0)
     ce = F.cross_entropy(text_logits.reshape(-1, V).float(), tgt.reshape(-1), reduction="none").view_as(w)
     text_loss = (ce * w).sum() / w.sum().clamp(min=1e-6)
@@ -383,6 +387,19 @@ def eval_loss(model, examples, cfg, special_ids, device) -> Dict[str, float]:
     return res
 
 
+def limit_to_episodes(examples: List[dict], n: int) -> List[dict]:
+    """The examples of the first n episodes, in manifest order (the same
+    episodes evaluate.py --split train --max-episodes n scores)."""
+    keep: List[str] = []
+    for e in examples:
+        if e["episode_id"] not in keep:
+            if len(keep) == n:
+                continue
+            keep.append(e["episode_id"])
+    ks = set(keep)
+    return [e for e in examples if e["episode_id"] in ks]
+
+
 # --- main loop -------------------------------------------------------------------------
 
 def run(cfg: dict, base_dir: str, resume: bool = False, log=print) -> Dict[str, Any]:
@@ -398,6 +415,9 @@ def run(cfg: dict, base_dir: str, resume: bool = False, log=print) -> Dict[str, 
 
     train_split = tcfg.get("split", "train")
     train_ex = load_examples(prepared, train_split)
+    if tcfg.get("limit_episodes"):
+        train_ex = limit_to_episodes(train_ex, int(tcfg["limit_episodes"]))
+        log(f"pilot: training on the first {tcfg['limit_episodes']} episodes ({len(train_ex)} examples)")
     negatives = tcfg.get("negatives", "exclude")
     if negatives == "exclude":
         train_ex = [e for e in train_ex if not e["meta"].get("negative")]
