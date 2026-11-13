@@ -13,9 +13,11 @@ if [ -z "${RUN_ALL_LOGGING:-}" ]; then
 fi
 set -E  # let the ERR trap fire inside functions too
 touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
+start_progress
 
 fail() {
   echo "run_all: FAILED at step '$STEP' ($(date)). Log: ~/run_all.log. Shutting down in 5 minutes."
+  notify "FAILED at step $STEP. The log is in the bucket under logs/."
   rm -f "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
   # Copy the log to the bucket so the error can be read without a GPU.
   tail -c 200000 "$HOME/run_all.log" | tr -d '\000' > "$HOME/run_all.tail.log" || true

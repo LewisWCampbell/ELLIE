@@ -13,6 +13,8 @@ source "$(dirname "$0")/_env.sh"
 set +e  # one failing step must not stop the rest, the upload or the shutdown
 LOG="$HOME/pilot.log"
 STAMP=$(date +%Y%m%d_%H%M)
+start_progress
+notify "Pilot started"
 filter() { grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
 {
   for s in mimi plain; do
@@ -37,4 +39,5 @@ filter() { grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
   echo "=== done $(date)"
 } > "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/pilot_$STAMP.log" || true
+notify "Pilot finished. Read logs/pilot_$STAMP.log"
 sudo shutdown -h +2

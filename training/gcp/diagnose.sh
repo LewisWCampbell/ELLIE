@@ -19,6 +19,8 @@ DRUN="${DIAG_RUN:-elle_tools_v1}"
 OUT="$ELLE_WORK/runs/$DRUN/eval"
 LOG="$HOME/diagnose.log"
 STAMP=$(date +%Y%m%d_%H%M)
+start_progress
+notify "Diagnostic of $DRUN started"
 run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
 {
   run python3 training/model/markers.py --config $CFG --split val --max-examples 200
@@ -33,5 +35,6 @@ run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kerne
   echo "=== done $(date)"
 } > "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/diagnose_$STAMP.log" || true
+notify "Diagnostic finished: $(grep -a 'tool calls made' "$LOG" | head -1 | cut -c1-120)"
 gcloud storage rsync -r "$OUT" "$BUCKET/runs/$DRUN/eval" || true
 [ "${NO_SHUTDOWN:-0}" = 1 ] || sudo shutdown -h +2   # NO_SHUTDOWN=1 when another job follows

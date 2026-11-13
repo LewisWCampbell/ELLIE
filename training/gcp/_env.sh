@@ -14,6 +14,18 @@ export ELLE_CFG="${ELLE_CFG:-training/gcp/config/gcp_v2.yaml}"
 export RUN_NAME="${RUN_NAME:-elle_tools_v2}"
 CFG_TAG="$(basename "$ELLE_CFG" .yaml)"
 
+# Start the background progress reporter (progress.sh) unless one is running.
+start_progress() {
+  pgrep -f "training/gcp/progress.sh" >/dev/null 2>&1 || \
+    nohup bash "$REPO/training/gcp/progress.sh" >/dev/null 2>&1 &
+}
+
+# A one-off phone notification (only if NTFY_TOPIC is set; see progress.sh).
+notify() {
+  [ -n "${NTFY_TOPIC:-}" ] && curl -s -m 10 -H "Title: Elle training" -d "$1" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null 2>&1
+  return 0
+}
+
 # Pause the Cloud Scheduler job that restarts this VM after Spot stops (if one
 # was set up), so a finished or failed run is not booted again every 10 min.
 stop_watchdog() {

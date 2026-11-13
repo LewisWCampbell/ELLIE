@@ -50,5 +50,6 @@ fi
 
 rm -f "$ELLE_WORK/.training"
 stop_watchdog
+notify "Training and evaluation finished for $RUN_NAME. Shutting down."
 echo "Shutting down to stop billing."
 sudo shutdown -h +2
