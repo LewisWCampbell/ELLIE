@@ -111,11 +111,12 @@ def closed_loop(gen: FrameGenerator, tok, ex: dict, ep: dict, gcfg: dict) -> Dic
     errors: List[dict] = []
     pending: Dict[str, int] = {}
     last: Optional[int] = None
-    forced_frames = tool_opens = 0
+    forced_frames = tool_opens = stray_closes = 0
     try:
         for f in range(T):
             if f < P and gen.native_prompt:
                 stream.append(int(ex["text"][f]))  # the backend consumed the prompt itself
+                gen.frame_stats.append(None)  # keep frame_stats indexed by frame
                 continue
             caller = ex["audio"][N_CB:2 * N_CB, f].astype(np.int64)
             elle = ex["audio"][:N_CB, f].astype(np.int64) if (f < P or teacher) else None
@@ -130,7 +131,10 @@ def closed_loop(gen: FrameGenerator, tok, ex: dict, ep: dict, gcfg: dict) -> Dic
             stream.append(tk)
             for ev in parser.feed(tk, f):
                 if ev.kind == "tool_error":
-                    errors.append({"frame": f, "start_frame": ev.start_frame, **ev.payload})
+                    if ev.payload.get("stray"):
+                        stray_closes += 1  # </tool> with no open call: not a failed call
+                    else:
+                        errors.append({"frame": f, "start_frame": ev.start_frame, **ev.payload})
                 elif ev.kind == "tool_call":
                     cid = ev.payload["id"] or f"c{f}"
                     content, lat = oracle.answer(ev.payload["name"], ev.payload["args"])
@@ -148,7 +152,7 @@ def closed_loop(gen: FrameGenerator, tok, ex: dict, ep: dict, gcfg: dict) -> Dic
     finally:
         gen.finish()
     return {"text": stream, "forced_frames": forced_frames, "calls": calls, "tool_opens": tool_opens,
-            "tool_errors": errors, "frame_stats": list(gen.frame_stats or [])}
+            "tool_errors": errors, "stray_closes": stray_closes, "frame_stats": list(gen.frame_stats or [])}
 
 
 # --- tiny backend ---------------------------------------------------------------

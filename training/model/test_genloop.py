@@ -167,14 +167,24 @@ class CallAttemptTest(unittest.TestCase):
     def test_abandoned_call_then_good_call(self):
         tok = self.tok
         open_id = tok.special_ids["<tool>"]
-        partial = [open_id] + tok.encode('{"id":"c1","na')[:3] + [PAD_ID] * 5
+        # A call that stalls and never closes is abandoned after MAX_SPAN_FRAMES...
+        partial = [open_id] + tok.encode('{"id":"c1","na')[:3] + [PAD_ID] * 205
         before = [PAD_ID] * 3 + partial + [PAD_ID] * 3 + tok.encode(CALL)
         gen = ScriptedGenerator(tok, before, [])
         out = closed_loop(gen, tok, self.ex, episode(), {})
         self.assertEqual(out["tool_opens"], 2)
         self.assertEqual(len(out["tool_errors"]), 1)
-        self.assertIn("padding", out["tool_errors"][0]["error"])
+        self.assertIn("not closed within", out["tool_errors"][0]["error"])
         self.assertEqual(len(out["calls"]), 1)  # <tool> was not left banned after the abort
+
+    def test_call_with_a_pause_inside_still_parses(self):
+        tok = self.tok
+        body = tok.encode(CALL)
+        before = [PAD_ID] * 3 + body[:6] + [PAD_ID] * 4 + body[6:]
+        gen = ScriptedGenerator(tok, before, [])
+        out = closed_loop(gen, tok, self.ex, episode(), {})
+        self.assertEqual((out["tool_opens"], len(out["calls"]), len(out["tool_errors"])), (1, 1, 0))
+        self.assertEqual(out["calls"][0]["name"], "check_availability")
 
     def test_unclosed_call_is_reported_at_end(self):
         tok = self.tok

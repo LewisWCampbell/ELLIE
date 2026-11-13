@@ -344,7 +344,8 @@ def eval_loss(model, examples, cfg, special_ids, device) -> Dict[str, float]:
         for k in tot:
             tot[k] += float(l[k]) * len(examples[i:i + bs])
         logits, tgt = out[0].float(), batch["text"]
-        valid = (batch["loss_mask"] > 0) & (tgt >= 0)
+        # Frames trained by unlikelihood (neg_mask) are not targets to get right.
+        valid = (batch["loss_mask"] > 0) & (tgt >= 0) & (batch["neg_mask"] == 0)
         pred = logits.argmax(-1)
         sel = torch.zeros_like(tgt, dtype=torch.bool)
         for s in special_ids[:2]:  # <tool>, </tool>: the predicted ones

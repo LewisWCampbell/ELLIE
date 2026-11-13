@@ -23,13 +23,12 @@ from textvocab import (EPAD_ID, FRAME_RATE, PAD_ID, RESULT_CLOSE, RESULT_OPEN, T
                        TextTokenizer)
 
 MAX_SPAN_TOKENS = 256  # a span longer than this is abandoned as malformed
-# Frame limits for a <tool> span. Training writes a call's tokens back to back
-# (prepare.py), so padding inside one means the model lost the thread; a call
-# that never closes must not swallow the rest of the episode (it would also
-# keep <tool> banned and block every result). The longest call in the data is
-# about 100 frames.
+# A <tool> span that never closes must not swallow the rest of the episode (it
+# would also keep <tool> banned and block every result): it is abandoned after
+# this many frames. The longest call in the data is about 85 tokens, written
+# back to back. Padding inside a span is skipped, not fatal: a sampled model may
+# pause mid-call and still finish it correctly.
 MAX_SPAN_FRAMES = 200
-MAX_PAD_RUN_IN_TOOL = 2
 _RESULT_HEAD = re.compile(r'^\s*"([^"]*)">(.*)$', re.S)
 
 
@@ -43,21 +42,18 @@ class StreamEvent:
 
 
 class ToolStreamParser:
-    def __init__(self, tok: TextTokenizer, max_span_frames: int = MAX_SPAN_FRAMES,
-                 max_pad_run: int = MAX_PAD_RUN_IN_TOOL):
+    def __init__(self, tok: TextTokenizer, max_span_frames: int = MAX_SPAN_FRAMES):
         self.tok = tok
         self.ids = tok.special_ids
         self.mode = "speech"  # speech | tool | result
         self.buf: List[int] = []
         self.span_start = 0
-        self.pad_run = 0
         self.max_span_frames = max_span_frames
-        self.max_pad_run = max_pad_run
 
     def _abort(self, frame: int, token: Optional[int], error: str) -> List[StreamEvent]:
         """Abandon the open span: a tool_error carrying what was decoded so far."""
         mode, start, text = self.mode, self.span_start, self.tok.decode(self.buf)
-        self.mode, self.buf, self.pad_run = "speech", [], 0
+        self.mode, self.buf = "speech", []
         return [StreamEvent("tool_error", frame, token, start, {"error": f"{mode} span: {error}", "text": text})]
 
     def flush(self, frame: int) -> List[StreamEvent]:
@@ -72,13 +68,13 @@ class ToolStreamParser:
         ids = self.ids
         if self.mode == "speech":
             if token == ids[TOOL_OPEN]:
-                self.mode, self.buf, self.span_start, self.pad_run = "tool", [], frame, 0
+                self.mode, self.buf, self.span_start = "tool", [], frame
                 return []
             if token == ids[RESULT_OPEN]:
-                self.mode, self.buf, self.span_start, self.pad_run = "result", [], frame, 0
+                self.mode, self.buf, self.span_start = "result", [], frame
                 return []
             if token in (ids[TOOL_CLOSE], ids[RESULT_CLOSE]):
-                return [StreamEvent("tool_error", frame, token, frame, {"error": "stray close marker"})]
+                return [StreamEvent("tool_error", frame, token, frame, {"error": "stray close marker", "stray": True})]
             return [StreamEvent("token", frame, token)]
         close = ids[TOOL_CLOSE] if self.mode == "tool" else ids[RESULT_CLOSE]
         if token == close:
@@ -101,13 +97,7 @@ class ToolStreamParser:
         if self.mode == "tool" and frame - self.span_start > self.max_span_frames:
             return self._abort(frame, token, f"not closed within {self.max_span_frames} frames")
         if token in (EPAD_ID, PAD_ID):
-            # Results are forced and contiguous; padding there carries nothing.
-            if self.mode == "tool":
-                self.pad_run += 1
-                if self.pad_run > self.max_pad_run:
-                    return self._abort(frame, token, "padding inside the call")
-            return []
-        self.pad_run = 0
+            return []  # padding inside a span carries nothing
         self.buf.append(token)
         if len(self.buf) > MAX_SPAN_TOKENS:
             return self._abort(frame, token, "too long")

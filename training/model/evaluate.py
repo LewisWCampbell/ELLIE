@@ -269,7 +269,10 @@ def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str,
     ref = [int(t) for t in ex["text"]]
     gen = [int(t) for t in out["text"]]
     stats = out.get("frame_stats") or []
-    ref_calls = [f for f, t in enumerate(ref) if t == tool and f >= P]
+    neg = ex.get("neg_mask")
+    # A call the model was trained NOT to make (an unsafe write in a negative
+    # episode, neg_mask set) is not a place where <tool> is expected.
+    ref_calls = [f for f, t in enumerate(ref) if t == tool and f >= P and not (neg is not None and neg[f])]
     near = []
     for f in ref_calls:
         lo, hi = max(P, f - window), min(len(gen), f + window + 1)
@@ -280,6 +283,7 @@ def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str,
     first_div = next((f for f in range(P, min(len(ref), len(gen))) if ref[f] != gen[f]), None)
     return {"reference_calls": len(ref_calls), "tool_opens": out.get("tool_opens", 0),
             "calls": len(out.get("calls", [])), "tool_errors": len(out.get("tool_errors", [])),
+            "stray_closes": out.get("stray_closes", 0),
             "error_samples": [{"error": e.get("error"), "text": (e.get("text") or "")[:200]}
                               for e in out.get("tool_errors", [])[:3]],
             "max_p_tool": max(free) if free else None, "near_reference_calls": near,
@@ -295,6 +299,7 @@ def summarize_diagnostics(diag: List[dict]) -> Dict[str, Any]:
         "tool_opens": sum(d["tool_opens"] for d in diag),
         "calls_parsed": sum(d["calls"] for d in diag),
         "tool_errors": sum(d["tool_errors"] for d in diag),
+        "stray_closes": sum(d.get("stray_closes", 0) for d in diag),
         "emitted_near_reference_call": sum(1 for n in near if n["emitted"]),
         "near_reference_p_tool_mean": (sum(ps) / len(ps)) if ps else None,
         "near_reference_p_tool_over_0.5": sum(1 for p in ps if p > 0.5),
@@ -350,7 +355,8 @@ def markdown(rep: Dict[str, Any]) -> str:
         if at:
             lines += [f"- decoding: {rep.get('decoding')}",
                       f"- call attempts: reference calls {at['reference_calls']}, <tool> emitted {at['tool_opens']},"
-                      f" parsed calls {at['calls_parsed']}, failed/unclosed spans {at['tool_errors']},"
+                      f" parsed calls {at['calls_parsed']}, failed/unclosed calls {at['tool_errors']},"
+                      f" stray </tool> {at['stray_closes']},"
                       f" emitted within 10 frames of a reference call {at['emitted_near_reference_call']}",
                       f"- p(<tool>) near reference calls: mean {_fmt(at['near_reference_p_tool_mean'])},"
                       f" >0.5 at {at['near_reference_p_tool_over_0.5']}/{at['probed_reference_calls']},"

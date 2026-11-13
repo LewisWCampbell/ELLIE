@@ -49,7 +49,10 @@ def marker_report(cfg: dict, base: str, ckpt: str = None, split: str = "val", ma
     model, new_ids, _ = build_model(cfg, tok, device, base, None, os.path.join(run_dir, "base.pt"))
     assert new_ids == [tok.special_ids[s] for s in SPECIAL_TOKENS], (new_ids, tok.special_ids)
     set_trainable(model, torch.load(os.path.join(ckpt, "trainable.pt"), map_location=device), new_ids)
-    exs = load_examples(resolve_path(cfg["data"]["prepared_dir"], base), split)
+    # As train.run's eval set: no negative episodes (their unsafe calls were
+    # trained to be suppressed, so they are not places <tool> should win).
+    exs = [e for e in load_examples(resolve_path(cfg["data"]["prepared_dir"], base), split)
+           if not e["meta"].get("negative")]
     open_id = new_ids[0]
     # Only examples that contain a <tool> target say anything about the decision.
     with_calls = [e for e in exs if (e["text"] == open_id).any()]
