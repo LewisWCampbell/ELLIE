@@ -21,7 +21,8 @@ while true; do
 latest: ${mile:-starting}
 training: ${step:-n/a}
 gpu: ${gpu:-n/a}"
-  echo "$status" | gcloud storage cp - "$BUCKET/status.txt" >/dev/null 2>&1
+  echo "$status" > "$HOME/status.txt"
+  gcloud storage cp "$HOME/status.txt" "$BUCKET/status.txt" >> "$HOME/progress.err" 2>&1
   if [ -n "${NTFY_TOPIC:-}" ] && [ -n "$mile" ] && [ "$mile" != "$last" ]; then
     curl -s -m 10 -H "Title: Elle training" -d "$mile" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null
     last="$mile"
