@@ -16,7 +16,9 @@ CFG_TAG="$(basename "$ELLE_CFG" .yaml)"
 
 # Start the background progress reporter (progress.sh) unless one is running.
 start_progress() {
-  pgrep -f "training/gcp/progress.sh" >/dev/null 2>&1 || \
+  # The [p] and the $ make the pattern match only a running reporter, never a
+  # shell whose command line merely mentions progress.sh (or this pgrep itself).
+  pgrep -f 'training/gcp/[p]rogress\.sh$' >/dev/null 2>&1 || \
     nohup bash "$REPO/training/gcp/progress.sh" >/dev/null 2>&1 &
 }
 
