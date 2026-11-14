@@ -14,6 +14,13 @@ fi
 set -E  # let the ERR trap fire inside functions too
 touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
 start_progress
+# A sick GPU is not a failed run: keep the resume markers and stop, so the
+# restart job brings the VM back (usually on other hardware) and this resumes.
+if ! check_gpu; then
+  echo "run_all: GPU failed its health check ($(date)); stopping for a restart on other hardware."
+  sudo shutdown -h +1
+  exit 1
+fi
 
 fail() {
   echo "run_all: FAILED at step '$STEP' ($(date)). Log: ~/run_all.log. Shutting down in 5 minutes."

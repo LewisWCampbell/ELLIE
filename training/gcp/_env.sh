@@ -22,6 +22,14 @@ start_progress() {
     nohup bash "$REPO/training/gcp/progress.sh" >/dev/null 2>&1 &
 }
 
+# Stop early on a sick GPU (gpu_check.py). Returns non-zero if it failed.
+check_gpu() {
+  if ! python3 "$REPO/training/gcp/gpu_check.py"; then
+    notify "GPU failed its health check; stopping so the VM can be restarted on other hardware."
+    return 1
+  fi
+}
+
 # A one-off phone notification (only if NTFY_TOPIC is set; see progress.sh).
 notify() {
   [ -n "${NTFY_TOPIC:-}" ] && curl -s -m 10 -H "Title: Elle training" -d "$1" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null 2>&1

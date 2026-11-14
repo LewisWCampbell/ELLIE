@@ -20,10 +20,15 @@ OUT="$ELLE_WORK/runs/$DRUN/eval"
 LOG="$HOME/diagnose.log"
 STAMP=$(date +%Y%m%d_%H%M)
 start_progress
+if ! check_gpu > "$LOG" 2>&1; then
+  gcloud storage cp "$LOG" "$BUCKET/logs/diagnose_${STAMP}_gpu_failed.log" || true
+  sudo shutdown -h +2; exit 1
+fi
 notify "Diagnostic of $DRUN started"
 run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
 {
-  run python3 training/model/markers.py --config $CFG --split val --max-examples 200
+  # CUDA_LAUNCH_BLOCKING: if a kernel asserts, the trace points at the real line.
+  run env CUDA_LAUNCH_BLOCKING=1 python3 training/model/markers.py --config $CFG --split val --max-examples 200
   run python3 training/model/evaluate.py --config $CFG --mode model --split test --max-episodes "$N" \
       --temperature-text 0 --listen 5 --tag greedy
   for s in 0 1; do
@@ -33,7 +38,7 @@ run() { echo "=== $* ($(date))"; "$@" 2>&1 | grep -av "UserWarning\|extern_kerne
   run python3 training/model/evaluate.py --config $CFG --mode model --split test --max-episodes 5 \
       --temperature-text 0 --elle-audio teacher --tag teacher_audio
   echo "=== done $(date)"
-} > "$LOG" 2>&1
+} >> "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/diagnose_$STAMP.log" || true
 notify "Diagnostic finished: $(grep -a 'tool calls made' "$LOG" | head -1 | cut -c1-120)"
 gcloud storage rsync -r "$OUT" "$BUCKET/runs/$DRUN/eval" || true

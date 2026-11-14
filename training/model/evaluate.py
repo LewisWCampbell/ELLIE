@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Any, Dict, List, Optional
@@ -276,10 +277,12 @@ def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str,
     near = []
     for f in ref_calls:
         lo, hi = max(P, f - window), min(len(gen), f + window + 1)
-        ps = [stats[g]["p_tool"] for g in range(lo, hi) if g < len(stats) and stats[g]]
+        ps = [stats[g]["p_tool"] for g in range(lo, hi)
+              if g < len(stats) and stats[g] and math.isfinite(stats[g]["p_tool"])]
         near.append({"ref_frame": f, "max_p_tool": max(ps) if ps else None,
                      "emitted": any(gen[g] == tool for g in range(lo, hi))})
-    free = [st["p_tool"] for st in stats[P:] if st]
+    nonfinite = sum(1 for st in stats if st and not math.isfinite(st["p_tool"]))
+    free = [st["p_tool"] for st in stats[P:] if st and math.isfinite(st["p_tool"])]
     first_div = next((f for f in range(P, min(len(ref), len(gen))) if ref[f] != gen[f]), None)
     return {"reference_calls": len(ref_calls), "tool_opens": out.get("tool_opens", 0),
             "calls": len(out.get("calls", [])), "tool_errors": len(out.get("tool_errors", [])),
@@ -287,7 +290,8 @@ def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str,
             "error_samples": [{"error": e.get("error"), "text": (e.get("text") or "")[:200]}
                               for e in out.get("tool_errors", [])[:3]],
             "max_p_tool": max(free) if free else None, "near_reference_calls": near,
-            "first_divergence_frame": first_div, "prompt_frames": P}
+            "first_divergence_frame": first_div, "prompt_frames": P,
+            "nonfinite_frames": nonfinite, "frames": len(stats)}
 
 
 def summarize_diagnostics(diag: List[dict]) -> Dict[str, Any]:
@@ -306,6 +310,9 @@ def summarize_diagnostics(diag: List[dict]) -> Dict[str, Any]:
         "near_reference_p_tool_over_0.1": sum(1 for p in ps if p > 0.1),
         "probed_reference_calls": len(ps),
         "median_frames_to_first_divergence": sorted(div)[len(div) // 2] if div else None,
+        # NaN/inf text probabilities: never produced by a healthy model; points at the GPU or numerics.
+        "nonfinite_frames": sum(d.get("nonfinite_frames", 0) for d in diag),
+        "frames": sum(d.get("frames", 0) for d in diag),
     }
 
 
@@ -362,7 +369,9 @@ def markdown(rep: Dict[str, Any]) -> str:
                       f" >0.5 at {at['near_reference_p_tool_over_0.5']}/{at['probed_reference_calls']},"
                       f" >0.1 at {at['near_reference_p_tool_over_0.1']}/{at['probed_reference_calls']}",
                       f"- median frames after the prompt before the text first leaves the reference:"
-                      f" {at['median_frames_to_first_divergence']}"]
+                      f" {at['median_frames_to_first_divergence']}",
+                      f"- frames with NaN/inf probabilities: {at.get('nonfinite_frames')} of {at.get('frames')}"
+                      + ("  <-- NUMBERS UNRELIABLE (GPU or numerics fault)" if at.get("nonfinite_frames") else "")]
         pf = rep.get("plain_forgetting")
         if pf:
             g = pf.get("gate") or {}

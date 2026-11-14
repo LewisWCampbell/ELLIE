@@ -14,6 +14,10 @@ set +e  # one failing step must not stop the rest, the upload or the shutdown
 LOG="$HOME/pilot.log"
 STAMP=$(date +%Y%m%d_%H%M)
 start_progress
+if ! check_gpu > "$LOG" 2>&1; then
+  gcloud storage cp "$LOG" "$BUCKET/logs/pilot_${STAMP}_gpu_failed.log" || true
+  sudo shutdown -h +2; exit 1
+fi
 notify "Pilot started"
 filter() { grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
 {
@@ -37,7 +41,7 @@ filter() { grep -av "UserWarning\|extern_kernels\|^  return Variable"; }
     gcloud storage cp "$ELLE_WORK/runs/pilot_lr$lr/train_log.jsonl" "$BUCKET/runs/pilot_lr$lr/" || true
   done
   echo "=== done $(date)"
-} > "$LOG" 2>&1
+} >> "$LOG" 2>&1
 gcloud storage cp "$LOG" "$BUCKET/logs/pilot_$STAMP.log" || true
 notify "Pilot finished. Read logs/pilot_$STAMP.log"
 sudo shutdown -h +2
