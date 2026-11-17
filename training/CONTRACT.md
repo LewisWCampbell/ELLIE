@@ -29,6 +29,68 @@ data must contain both:
 
 Times are in the owner's zone, America/Los_Angeles; a call is 30 minutes.
 
+## Contract v3: the model decides, the system supplies the facts (supersedes the table above for the voice model)
+
+The first trained model (v1) was evaluated on 2026-11-14. It chose the right
+tool at the right point most of the time and heard times of day correctly, but
+it invented callers' names and emails (it hears audio codes, not words), it
+sometimes invented tool names or broke the JSON, and it booked without a proper
+yes in a third to half of the cases. v3 removes each of those from the model's
+job:
+
+**1. The voice model never writes a name, an email or free text.** Its tools:
+
+| Tool | Kind | Argument | Result (text) |
+|---|---|---|---|
+| `check_availability` | read | `start` | `FREE: …`, `BUSY: … Nearby open times: …`, `UNKNOWN: …` (as before) |
+| `get_my_bookings` | read | none | as before |
+| `get_caller_details` | read | none | `ON FILE: <name>, <email spoken>.` (from the caller's history), `HEARD: <name>, <email spoken>.` (taken from this call's transcript by the system), or `MISSING: <what>. Ask for it.` |
+| `book_intro_call` | write | `start` | `Done: …tentative…`, slot-taken, error (as before), or `NOT BOOKED: <reason>. <what to do>` from the booking guard |
+| `record_sms_consent` | write, silent | none | `Saved.` |
+
+`save_user_fact` is gone from the voice model: remembering a caller's name,
+company or reason for calling is done by the system from the transcript.
+`topic` is gone from bookings.
+
+**2. Who the caller is comes from their history.** Episode `context.caller_on_file`
+is `{"name": …, "email": …}` for a returning caller, else `null`. The system
+prompt says so (`{caller}` in `prepare.prompt_text`): "The caller is Rosa
+Greenleaf, a returning caller." or "The caller is not on file." Elle does not
+ask a returning caller for their name or email. For a new caller she asks for
+both, as before.
+
+**3. Facts are read back from a result, never from memory.** Before any readback
+Elle calls `get_caller_details`; the readback is a claim that depends on that
+result (and on the availability result for the time). The readback states the
+time with the timezone, the name and the email exactly as the result gives
+them.
+
+**4. Compact calls.** The text stream carries
+`<tool>NAME</tool>` or `<tool>NAME ARG</tool>`: the tool name, then for
+`check_availability` and `book_intro_call` one space and the local start time
+as `YYYY-MM-DDTHH:MM` (America/Los_Angeles; the system adds the offset). No
+JSON, no id. Calls are numbered by the system in order (`c1`, `c2`, …) and the
+result keeps its form `<result id="c1">…</result>`. Episode events keep
+`{"id","name","args"}` with `args.start` as full ISO 8601 as before; only the
+serialization changes (`serialize.tool_call_text`). A call of this form is at
+most about 15 tokens (was about 50), so it takes about a second, not four.
+Anything that is not exactly one of the five names with a well-formed argument
+is rejected by the parser (`tool_error`) and answered with
+`<result id="cN">ERROR: unknown tool. Use one of: …</result>`.
+
+**5. The booking guard (code, not the model).** `book_intro_call` is executed
+only if, in this call: (a) the most recent `check_availability` for that same
+start returned `FREE`; (b) `get_caller_details` returned `ON FILE` or `HEARD`;
+(c) after both, Elle read the details back and the caller then said yes (the
+system knows from the transcript; in evaluation, from the episode's caller
+`confirm` event); (d) that start is not already booked in this call. Otherwise
+the result is `NOT BOOKED: …` and nothing is written. `record_sms_consent` is
+executed only after the consent question and a yes.
+
+The first-run table and JSON format above describe v1 data and production's
+text tools; `serialize.py` and the parser accept both forms (`format: json |
+compact`), so v1 artefacts stay readable.
+
 ## Episode format (JSONL, one episode per line)
 
 ```json
