@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import expand  # noqa: E402
 import render_audio  # noqa: E402
 from generate import build_episode  # noqa: E402
-from serialize import (SPECIAL_TOKENS, extract_results, extract_tool_calls, forced_spans,  # noqa: E402
-                       serialize_episode, strip_markers, to_text_and_mask)
+from serialize import (SPECIAL_TOKENS, compact_start, expand_start, extract_results,  # noqa: E402
+                       extract_tool_calls, forced_spans, parse_call_body, serialize_episode,
+                       strip_markers, to_text_and_mask, tool_call_text)
 
 CONTRACT_EXAMPLE = {
     "id": "ep_000123", "split": "train", "scenario": "x", "seed": 123, "now": "2026-11-09T10:15:00-08:00",
@@ -31,7 +32,8 @@ class TestSerialize(unittest.TestCase):
     def test_contract_example_exact(self):
         segs = serialize_episode(CONTRACT_EXAMPLE)
         self.assertEqual([s.kind for s in segs], ["speech", "tool_call", "tool_result", "speech"])
-        self.assertEqual(segs[1].text,
+        self.assertEqual(segs[1].text, "<tool>check_availability 2026-11-12T14:00</tool>")
+        self.assertEqual(serialize_episode(CONTRACT_EXAMPLE, fmt="json")[1].text,
                          '<tool>{"id":"c1","name":"check_availability","args":{"start":"2026-11-12T14:00:00-08:00"}}</tool>')
         self.assertEqual(segs[2].text, '<result id="c1">FREE: ok</result>')
         self.assertEqual([s.t for s in segs], [2.45, 2.50, 3.30, 3.70])
@@ -63,9 +65,10 @@ class TestSerialize(unittest.TestCase):
             calls = {e["id"]: e for e in ep["events"] if e["type"] == "tool_call"}
             res = {e["id"]: e for e in ep["events"] if e["type"] == "tool_result"}
             pos = {}
+            order = iter(sorted(calls, key=lambda c: int(c[1:])))  # compact calls carry no id: c1, c2, ...
             for k, s in enumerate(segs):
                 if s.kind == "tool_call":
-                    cid = json.loads(s.text[len("<tool>"):-len("</tool>")])["id"]
+                    cid = next(order)
                     self.assertEqual(s.t, calls[cid]["t"])
                     pos[("call", cid)] = k
                 elif s.kind == "tool_result":
@@ -101,6 +104,63 @@ class TestSerialize(unittest.TestCase):
         for tok in SPECIAL_TOKENS:
             self.assertNotIn(tok, plain)
         self.assertEqual(extract_tool_calls("<tool>{not json</tool>")[0].get("raw"), "{not json")
+
+    def test_compact_and_json_forms_both_parse(self):
+        for name in ("book_after_availability_free", "book_email_corrected", "bookings_one", "returning_caller"):
+            for seed in range(5):
+                ep = build_episode(name, seed)
+                want = [{"id": e["id"], "name": e["name"], "args": e["args"]}
+                        for e in ep["events"] if e["type"] == "tool_call"]
+                for fmt in ("compact", "json"):
+                    text, _ = to_text_and_mask(serialize_episode(ep, fmt=fmt))
+                    self.assertEqual(extract_tool_calls(text), want, (name, seed, fmt))
+                compact, _ = to_text_and_mask(serialize_episode(ep))
+                self.assertNotIn("{", "".join(m for m in compact.split("<tool>")[1:] for m in [m.split("</tool>")[0]]))
+
+    def test_compact_call_text(self):
+        ev = {"id": "c3", "name": "book_intro_call", "args": {"start": "2026-11-12T14:00:00-08:00"}}
+        self.assertEqual(tool_call_text(ev), "<tool>book_intro_call 2026-11-12T14:00</tool>")
+        self.assertEqual(tool_call_text(ev, fmt="compact"), tool_call_text(ev))
+        self.assertEqual(tool_call_text(ev, fmt="json"),
+                         '<tool>{"id":"c3","name":"book_intro_call","args":{"start":"2026-11-12T14:00:00-08:00"}}</tool>')
+        for name in ("get_my_bookings", "get_caller_details", "record_sms_consent"):
+            self.assertEqual(tool_call_text({"id": "c1", "name": name, "args": {}}), f"<tool>{name}</tool>")
+        # A start given in another zone is written as Los Angeles wall time.
+        self.assertEqual(compact_start("2026-11-12T22:00:00+00:00"), "2026-11-12T14:00")
+        with self.assertRaises(ValueError):
+            tool_call_text(ev, fmt="yaml")
+
+    def test_compact_start_gets_the_offset_of_its_date(self):
+        for local, iso in (("2026-11-12T14:00", "2026-11-12T14:00:00-08:00"),   # standard time
+                           ("2026-07-01T09:30", "2026-07-01T09:30:00-07:00"),   # daylight time
+                           ("2026-10-31T16:00", "2026-10-31T16:00:00-07:00"),   # last day of PDT
+                           ("2026-11-01T10:00", "2026-11-01T10:00:00-08:00"),   # clocks went back at 2 a.m.
+                           ("2027-03-13T10:00", "2027-03-13T10:00:00-08:00"),   # day before spring forward
+                           ("2027-03-14T10:00", "2027-03-14T10:00:00-07:00")):  # clocks went forward at 2 a.m.
+            self.assertEqual(expand_start(local), iso)
+            self.assertEqual(compact_start(iso), local)
+            got = extract_tool_calls(f"<tool>check_availability {local}</tool>")
+            self.assertEqual(got, [{"id": "c1", "name": "check_availability", "args": {"start": iso}}])
+
+    def test_ids_are_assigned_in_order(self):
+        text = ("Sure. <tool>check_availability 2026-11-12T14:00</tool> "
+                '<result id="c1">FREE: ok</result> Great. <tool>get_caller_details</tool> '
+                '<result id="c2">ON FILE: Rosa Greenleaf, rosa dot greenleaf at example dot org.</result> '
+                "<tool>book_intro_call 2026-11-12T14:00</tool>")
+        self.assertEqual([(c["id"], c["name"]) for c in extract_tool_calls(text)],
+                         [("c1", "check_availability"), ("c2", "get_caller_details"), ("c3", "book_intro_call")])
+        self.assertEqual([r[0] for r in extract_results(text)], ["c1", "c2"])
+
+    def test_malformed_compact_calls_are_rejected(self):
+        for body in ("reschedule_booking", "save_user_fact", "book_intro_call", "check_availability Thursday",
+                     "check_availability 2026-11-12T14:00:00-08:00", "check_availability 2026-13-40T14:00",
+                     "get_caller_details 2026-11-12T14:00", "get_my_bookings ", " get_my_bookings",
+                     "book_intro_call 2026-11-12T14:00 Rosa", "book_intro_call  2026-11-12T14:00", ""):
+            with self.assertRaises(ValueError, msg=body):
+                parse_call_body(body)
+            got = extract_tool_calls(f"<tool>get_my_bookings</tool><tool>{body}</tool>")
+            self.assertEqual((got[1]["id"], got[1]["raw"]), ("c2", body))
+            self.assertIn("error", got[1])
 
 
 class TestOptionalStages(unittest.TestCase):

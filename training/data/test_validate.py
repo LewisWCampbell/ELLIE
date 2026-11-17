@@ -14,6 +14,9 @@ from generate import build_episode  # noqa: E402
 from validate import validate_episode, validate_files, violations  # noqa: E402
 
 
+INDEX_KEYS = ("intent_index", "question_index", "confirm_index")
+
+
 def codes(ep):
     return {i.code for i in validate_episode(ep)}
 
@@ -27,8 +30,9 @@ def resort(ep):
     for c in ep["labels"]["claim_spans"]:
         c["event_index"] = new_pos[c["event_index"]]
     for g in ep["labels"].get("write_gates", []):
-        g["readback_index"] = new_pos[g["readback_index"]]
-        g["confirm_index"] = new_pos[g["confirm_index"]]
+        for k in INDEX_KEYS:
+            if k in g:
+                g[k] = new_pos[g[k]]
     return ep
 
 
@@ -39,9 +43,9 @@ def delete_events(ep, idxs):
     ep["events"] = [ep["events"][i] for i in keep]
     ep["labels"]["claim_spans"] = [dict(c, event_index=pos[c["event_index"]])
                                    for c in ep["labels"]["claim_spans"] if c["event_index"] in pos]
-    ep["labels"]["write_gates"] = [dict(g, readback_index=pos[g["readback_index"]], confirm_index=pos[g["confirm_index"]])
+    ep["labels"]["write_gates"] = [dict(g, **{k: pos[g[k]] for k in INDEX_KEYS if k in g})
                                    for g in ep["labels"]["write_gates"]
-                                   if g["readback_index"] in pos and g["confirm_index"] in pos]
+                                   if all(g[k] in pos for k in INDEX_KEYS if k in g)]
     return ep
 
 
@@ -182,13 +186,25 @@ class TestArgs(Base):
         ep["now"] = "2025-01-01T10:00:00-08:00"
         self.assertIn("E_ARG_START_FAR", codes(ep))
 
-    def test_invalid_email(self):
-        ep = set_arg(self.fresh(), "book_intro_call", "email", "dana at example")
-        self.assertIn("E_ARG_EMAIL", codes(ep))
+    def test_name_email_topic_are_never_arguments(self):
+        for key, value in (("name", "Dana Whitfield"), ("email", "dana@example.com"), ("topic", "a backend role")):
+            ep = set_arg(self.fresh(), "book_intro_call", key, value)
+            self.assertLessEqual({"E_ARG_FREE_TEXT", "E_ARGS_SCHEMA"}, codes(ep), key)
 
-    def test_missing_required_arg(self):
-        ep = set_arg(self.fresh(), "book_intro_call", "email", None)
+    def test_missing_or_extra_arg(self):
+        ep = set_arg(self.fresh(), "book_intro_call", "start", None)
         self.assertIn("E_ARGS_SCHEMA", codes(ep))
+        ep = set_arg(self.fresh(), "get_caller_details", "start", "2026-11-12T14:00:00-08:00")
+        self.assertIn("E_ARGS_SCHEMA", codes(ep))
+
+    def test_save_user_fact_is_gone(self):
+        ep = self.fresh()
+        i = call_of(ep, "get_caller_details")
+        ep["events"][i]["name"] = "save_user_fact"
+        ep["events"][i]["args"] = {"category": "name", "fact": "Their name is Dana."}
+        ep["labels"]["expected_calls"] = [{"name": e["name"], "args": e["args"]}
+                                          for e in ep["events"] if e["type"] == "tool_call"]
+        self.assertLessEqual({"E_SAVE_USER_FACT", "E_ARG_FREE_TEXT"}, codes(ep))
 
     def test_unknown_tool(self):
         ep = self.fresh()
@@ -210,33 +226,167 @@ class TestBehaviour(Base):
         self.assertIn("E_PREMATURE_CLAIM", codes(ep))
         self.assertIn("premature_claim", violations(ep))
 
+    def book_gate(self, ep):
+        names = {e["id"]: e["name"] for e in ep["events"] if e["type"] == "tool_call"}
+        return next(g for g in ep["labels"]["write_gates"] if names[g["call_id"]] == "book_intro_call")
+
     def test_write_without_gate(self):
         ep = self.fresh()
-        ep["labels"]["write_gates"] = [g for g in ep["labels"]["write_gates"]
-                                       if not any(e.get("id") == g["call_id"] and e["name"] == "book_intro_call"
-                                                  for e in ep["events"] if e["type"] == "tool_call")]
+        ep["labels"]["write_gates"].remove(self.book_gate(ep))
         self.assertIn("E_UNGATED_WRITE", codes(ep))
+        self.assertIn("write_without_intent", violations(ep))
 
-    def test_write_before_yes(self):
+    def test_intent_must_be_an_accept_pick_or_book_intent(self):
         ep = self.fresh()
-        g = next(g for g in ep["labels"]["write_gates"]
-                 if any(e["type"] == "tool_call" and e["id"] == g["call_id"] and e["name"] == "book_intro_call"
-                        for e in ep["events"]))
-        confirm = ep["events"][g["confirm_index"]]
-        c = find(ep, lambda e: e["type"] == "tool_call" and e["id"] == g["call_id"])
-        r = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == g["call_id"])
-        ep["events"][c]["t"] = round(confirm["t"] + 0.01, 2)
-        ep["events"][r]["latency_s"] = round(ep["events"][r]["t"] - ep["events"][c]["t"], 2)
+        intent = ep["events"][self.book_gate(ep)["intent_index"]]
+        intent["act"] = "thanks"
+        intent.pop("book_intent", None)
+        self.assertIn("E_GATE_INVALID", codes(ep))
+
+    def test_intent_for_another_time(self):
+        ep = self.fresh()
+        intent = ep["events"][self.book_gate(ep)["intent_index"]]
+        s = intent["refers"]["start"]
+        intent["refers"]["start"] = s[:11] + ("09" if s[11:13] != "09" else "10") + s[13:]
+        self.assertIn("E_GATE_INVALID", codes(ep))
+
+    def test_intent_voided_by_a_later_decline(self):
+        ep = self.fresh()
+        g = self.book_gate(ep)
+        j = next(i for i in range(g["intent_index"] + 1, len(ep["events"]))
+                 if ep["events"][i]["type"] == "speech" and ep["events"][i]["ch"] == "caller"
+                 and i < call_of(ep, "book_intro_call"))
+        ep["events"][j]["act"] = "decline"
+        self.assertIn("E_GATE_INVALID", codes(ep))
+
+    def test_booking_needs_details_on_file_or_heard(self):
+        ep = self.fresh()
+        d = call_of(ep, "get_caller_details")
+        r = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == ep["events"][d]["id"])
+        ep["events"][r]["content"] = "MISSING: email. Ask for it."
+        self.assertIn("E_GATE_INVALID", codes(ep))
+        ep = self.fresh()
+        self.book_gate(ep)["details_call_id"] = ep["events"][call_of(ep, "check_availability")]["id"]
+        self.assertIn("E_GATE_INVALID", codes(ep))
+
+    def test_booking_before_the_details_result(self):
+        ep = self.fresh()
+        d = call_of(ep, "get_caller_details")
+        b = call_of(ep, "book_intro_call")
+        rb = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == ep["events"][b]["id"])
+        ep["events"][b]["t"] = round(ep["events"][d]["t"] + 0.01, 2)
+        ep["events"][rb]["latency_s"] = round(ep["events"][rb]["t"] - ep["events"][b]["t"], 2)
         resort(ep)
         self.assertIn("E_GATE_INVALID", codes(ep))
 
-    def test_readback_mismatch(self):
+    def test_booking_needs_a_free_check_for_that_start(self):
         ep = self.fresh()
-        g = ep["labels"]["write_gates"][0]
-        rb = ep["events"][g["readback_index"]]
-        if "refers" in rb:
-            rb["refers"]["email"] = "someone.else@example.com"
-            self.assertIn("E_GATE_INVALID", codes(ep))
+        c = call_of(ep, "check_availability")
+        r = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == ep["events"][c]["id"])
+        ep["events"][r]["content"] = "BUSY: that time is taken. Ask for another day."
+        self.assertIn("E_GATE_INVALID", codes(ep))
+        ep = self.fresh()
+        r = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == ep["events"][c]["id"])
+        ep["events"][r]["content"] = "UNKNOWN: couldn't read the calendar just now."
+        self.assertIn("E_GATE_INVALID", codes(ep))  # UNKNOWN never licenses a booking
+
+    def test_nothing_is_booked_after_unknown(self):
+        ends = set()
+        for seed in range(80):
+            ep = build_episode("availability_unknown_recovery", seed)
+            self.assertEqual(codes(ep), set())
+            self.assertNotIn("request", json.dumps(ep["labels"]))
+            names = {e["id"]: e for e in ep["events"] if e["type"] == "tool_call"}
+            last = {}
+            for e in ep["events"]:
+                if e["type"] == "tool_result" and names[e["id"]]["name"] == "check_availability":
+                    last[names[e["id"]]["args"]["start"]] = e["content"].split(":")[0]
+                elif e["type"] == "tool_call" and e["name"] == "book_intro_call":
+                    self.assertEqual(last.get(e["args"]["start"]), "FREE")
+            checks = [e["content"].split(":")[0] for e in ep["events"] if e["type"] == "tool_result"
+                      and names[e["id"]]["name"] == "check_availability"]
+            booked = any(e["name"] == "book_intro_call" for e in names.values())
+            ends.add((tuple(checks[:2]), booked))
+            if checks[:2] in (["UNKNOWN"], ["UNKNOWN", "UNKNOWN"]):
+                self.assertEqual(len(names), len(checks))  # no call after giving up
+        self.assertLessEqual({(("UNKNOWN",), False), (("UNKNOWN", "UNKNOWN"), False), (("UNKNOWN", "FREE"), True)}, ends)
+
+    def test_repeat_booking_needs_a_correction_and_updated(self):
+        ep = build_episode("book_email_corrected", 2)
+        self.assertEqual(codes(ep), set())
+        books = [e for e in ep["events"] if e["type"] == "tool_call" and e["name"] == "book_intro_call"]
+        self.assertEqual(len(books), 2)
+        broken = copy.deepcopy(ep)
+        r = find(broken, lambda e: e["type"] == "tool_result" and e["id"] == books[1]["id"])
+        broken["events"][r]["content"] = broken["events"][r]["content"].replace("Updated:", "Done:")
+        self.assertIn("E_GATE_INVALID", codes(broken))
+        broken = copy.deepcopy(ep)
+        fix = find(broken, lambda e: e.get("act") == "correction")
+        broken["events"][fix]["act"] = "thanks"
+        self.assertIn("E_GATE_INVALID", codes(broken))
+        first = copy.deepcopy(self.book)
+        r = find(first, lambda e: e["type"] == "tool_result" and e["content"].startswith("Done:"))
+        first["events"][r]["content"] = "Updated: the invite now goes to dana at example dot com."
+        self.assertIn("E_GATE_INVALID", codes(first))
+
+    def test_consent_write_needs_the_question_and_a_yes(self):
+        ep = None
+        for seed in range(40):
+            cand = build_episode("book_after_availability_free", seed)
+            if any(e["type"] == "tool_call" and e["name"] == "record_sms_consent" for e in cand["events"]):
+                ep = cand
+                break
+        self.assertEqual(codes(ep), set())
+        cid = ep["events"][call_of(ep, "record_sms_consent")]["id"]
+        gate = next(g for g in ep["labels"]["write_gates"] if g["call_id"] == cid)
+        self.assertEqual(set(gate), {"call_id", "question_index", "confirm_index"})
+        broken = copy.deepcopy(ep)
+        broken["events"][gate["confirm_index"]]["act"] = "decline"
+        self.assertIn("E_GATE_INVALID", codes(broken))
+        broken = copy.deepcopy(ep)
+        broken["labels"]["write_gates"] = [g for g in broken["labels"]["write_gates"] if g["call_id"] != cid]
+        self.assertIn("E_UNGATED_WRITE", codes(broken))
+
+    def booked_event(self, ep):
+        return ep["events"][find(ep, lambda e: e.get("act") == "booked")]
+
+    def test_post_booking_sentence_is_required_and_comes_from_results(self):
+        ep = self.fresh()
+        self.booked_event(ep)["act"] = "claim"
+        self.assertIn("E_BOOKED_CLAIM", codes(ep))
+        ep = self.fresh()
+        self.booked_event(ep)["refers"]["email"] = "someone.else@example.com"
+        self.assertIn("E_BOOKED_CLAIM", codes(ep))
+        ep = self.fresh()
+        ev = self.booked_event(ep)
+        ev["text"] = "You're all booked. See you then!"
+        self.assertIn("E_BOOKED_CLAIM", codes(ep))
+        ep = self.fresh()
+        ev = self.booked_event(ep)
+        i = ep["events"].index(ev)
+        ep["labels"]["claim_spans"] = [c for c in ep["labels"]["claim_spans"]
+                                       if not (c["event_index"] == i and c["depends_on"] == ev["refers"]["details"])]
+        self.assertIn("E_BOOKED_CLAIM", codes(ep))
+
+    def test_readback_act_is_rejected(self):
+        ep = self.fresh()
+        i = find(ep, lambda e: e["type"] == "speech" and e["ch"] == "elle" and e.get("act") == "pre_call")
+        ep["events"][i]["act"] = "readback"
+        self.assertIn("E_READBACK", codes(ep))
+
+    def test_caller_on_file_is_not_asked(self):
+        ep = None
+        for seed in range(40):
+            cand = build_episode("book_after_availability_free", seed)
+            if cand["context"]["caller_on_file"] is None:
+                ep = cand
+                break
+        self.assertEqual(codes(ep), set())
+        self.assertTrue(any(e.get("act") == "ask_name" for e in ep["events"]))
+        ep["context"]["caller_on_file"] = {"name": "Rosa Greenleaf", "email": "rosa.greenleaf@example.org"}
+        self.assertIn("E_ON_FILE_ASK", codes(ep))
+        ep["context"]["caller_on_file"] = {"name": "Rosa Greenleaf"}
+        self.assertIn("E_SCHEMA", codes(ep))
 
     def test_dead_air(self):
         for seed in range(50):
@@ -259,12 +409,19 @@ class TestBehaviour(Base):
         ep["events"][i]["text"] = "Got it, I'll make a note of that. What's your name?"
         self.assertIn("E_NARRATED_SAVE", codes(ep))
 
-    def test_name_from_notes(self):
-        ep = self.fresh()
-        ep["context"]["notes_names"] = ["Zephyrine Quux"]
+    def test_name_before_a_result_or_the_caller_gave_it(self):
+        ep = None
+        for seed in range(40):
+            cand = build_episode("book_after_availability_free", seed)
+            if cand["context"]["caller_on_file"] is None:
+                ep = cand
+                break
+        d = call_of(ep, "get_caller_details")
+        r = find(ep, lambda e: e["type"] == "tool_result" and e["id"] == ep["events"][d]["id"])
+        first = ep["events"][r]["content"].split(": ", 1)[1].split(" ")[0]
         i = find(ep, lambda e: e["type"] == "speech" and e["ch"] == "elle")
-        ep["events"][i]["text"] = "Hi Zephyrine, good to hear from you again."
-        self.assertIn("E_NOTES_NAME", codes(ep))
+        ep["events"][i]["text"] = f"Hi {first}, good to hear from you again."
+        self.assertIn("E_NAME_SOURCE", codes(ep))
 
     def test_negative_flag_on_positive(self):
         ep = self.fresh()
@@ -273,7 +430,7 @@ class TestBehaviour(Base):
         self.assertIn("E_NEGATIVE_LABEL", codes(ep))
 
     def test_negative_without_violation(self):
-        ep = build_episode("neg_book_without_readback", 1)
+        ep = build_episode("neg_book_without_intent", 1)
         self.assertEqual(codes(ep), set())
         ep["labels"]["negative_kind"] = "dead_air"
         self.assertIn("E_NEGATIVE_LABEL", codes(ep))
@@ -282,7 +439,7 @@ class TestBehaviour(Base):
     def test_negatives_are_detected(self):
         for name, kind in (("neg_premature_availability_claim", "premature_claim"),
                            ("neg_premature_bookings_claim", "premature_claim"),
-                           ("neg_book_without_readback", "write_without_readback"),
+                           ("neg_book_without_intent", "write_without_intent"),
                            ("neg_dead_air_wait", "dead_air")):
             ep = build_episode(name, 0)
             self.assertEqual(violations(ep), {kind}, name)

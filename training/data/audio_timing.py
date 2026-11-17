@@ -18,6 +18,10 @@ those relations when the durations change:
     is kept. Other events still in progress at that moment must not newly
     overlap it (each keeps min(its old gap, 0.15 s)). Claims therefore stay
     after their results, and writes after the yes.
+  - a tool call never moves ahead of a result it used to follow (it keeps
+    min(its old distance, 0.15 s) after it): book_intro_call is emitted on the
+    get_caller_details result, even when it also sits inside a pre-line whose
+    length changed.
   - a speaker never overlaps their own previous line (pushed 20 ms after it).
   - in a labelled premature-claim negative, the premature line keeps its offset
     from its call, so it stays premature where the timing allows.
@@ -101,6 +105,10 @@ def apply_measured(ep: Dict[str, Any], new_dur: Dict[int, float]) -> Dict[str, A
                         t = max(t, new_end[j] + min(t0 - old_end[j], 0.15))
                 else:
                     t = t0
+        if e["type"] == "tool_call":
+            for j in range(i):
+                if evs[j]["type"] == "tool_result":
+                    t = max(t, new_t[j] + min(t0 - old_t[j], 0.15))
         if is_speech and e["ch"] in last_end:
             t = max(t, last_end[e["ch"]] + SELF_GAP)
         t = round(max(0.0, t), 3)
@@ -132,8 +140,9 @@ def _resort(ep: Dict[str, Any]) -> None:
             c["event_index"] = pos[c["event_index"]]
         lab.get("claim_spans", []).sort(key=lambda c: c["event_index"])
         for g in lab.get("write_gates", []):
-            g["readback_index"] = pos[g["readback_index"]]
-            g["confirm_index"] = pos[g["confirm_index"]]
+            for k in ("intent_index", "question_index", "confirm_index"):
+                if k in g:
+                    g[k] = pos[g[k]]
     # Call ids must stay c1..cN in time order.
     remap: Dict[str, str] = {}
     for e in ep["events"]:
@@ -147,6 +156,12 @@ def _resort(ep: Dict[str, Any]) -> None:
         for c in lab.get("claim_spans", []):
             c["depends_on"] = remap.get(c["depends_on"], c["depends_on"])
         for g in lab.get("write_gates", []):
-            g["call_id"] = remap.get(g["call_id"], g["call_id"])
+            for k in ("call_id", "details_call_id"):
+                if k in g:
+                    g[k] = remap.get(g[k], g[k])
+        for e in ep["events"]:  # a post-booking sentence names its details call
+            ref = e.get("refers") or {}
+            if "details" in ref:
+                ref["details"] = remap.get(ref["details"], ref["details"])
         calls = [e for e in ep["events"] if e["type"] == "tool_call"]
         lab["expected_calls"] = [{"name": c["name"], "args": c["args"]} for c in calls]

@@ -12,7 +12,8 @@ stderr), so pipelines can call it unconditionally. To enable it:
     export EXPAND_MODEL=claude-opus-5-5   # optional override
 
 What may change: only speech whose `act` is in REWRITABLE_ACTS (greetings,
-fillers, acknowledgements, chit-chat, goodbyes). Readbacks, confirmations,
+fillers, acknowledgements, chit-chat, goodbyes). The greeting of a caller on
+file (it carries their name), post-booking sentences, confirmations,
 claims, times, names, emails, compliance wording and anything a label points at
 are never sent to the model. A rewrite is accepted only if it keeps the language,
 stays within +-30% of the word count (so the estimated durations still hold),
@@ -87,7 +88,7 @@ def _protected(ep: Dict[str, Any]) -> set:
     lab = ep["labels"]
     idx = {c["event_index"] for c in lab.get("claim_spans", [])}
     for g in lab.get("write_gates", []):
-        idx |= {g["readback_index"], g["confirm_index"]}
+        idx |= {g[k] for k in ("intent_index", "question_index", "confirm_index") if k in g}
     return idx
 
 

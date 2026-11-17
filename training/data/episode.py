@@ -3,8 +3,9 @@
 `Ep` is the small runtime that scenario functions drive. It places speech on
 the caller and Elle channels with realistic gaps and overlap, emits tool calls
 and results with latencies, keeps Elle talking through slow reads, and records
-which Elle utterances depend on which result (claim spans) and which readback
-and yes gate each write (write gates). `finish()` sorts the events and turns
+which Elle utterances depend on which result (claim spans) and what gates each
+write (write gates: the caller's booking intent and the details call for a
+booking, the consent question and yes for the SMS consent). `finish()` sorts the events and turns
 object references into the integer indices the contract uses.
 """
 
@@ -15,13 +16,15 @@ import random
 import re
 import unicodedata
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import banks
 import elle_time as T
 
 OWNER = "Lewis"
 SPEECH_RATE_WPS = 2.6  # words per second, before jitter
+ON_FILE_SHARE = 0.40   # drawn per episode; a few scenarios force a new or a returning caller
+READ_TOOLS = ("check_availability", "get_my_bookings", "get_caller_details")
 
 
 def _cap(s: str) -> str:
@@ -66,12 +69,21 @@ class Ep:
         self.calls: Dict[str, Dict[str, Any]] = {}
         self.results: Dict[str, Dict[str, Any]] = {}
         self.claims: List[Tuple[Dict[str, Any], str]] = []
-        self.gates: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+        self.gates: List[Dict[str, Any]] = []
         self.negative_kind: Optional[str] = None
-        self.notes: List[Dict[str, str]] = []
-        self.notes_names: List[str] = []
         self.channel = "voice"
         self.p = Person(rng, lang)
+        # Contract v3: a returning caller's name and email are on file, so Elle
+        # never asks for them. Scenarios that need a new caller set this to False
+        # before their first event.
+        self.on_file = rng.random() < ON_FILE_SHARE
+        # What the system could take from this call's transcript so far
+        # (get_caller_details answers from these, never from Elle's memory).
+        self.heard_name = False
+        self.heard_email = False
+        # The caller event that asked to book or accepted a time, and that time.
+        self.intent: Optional[Dict[str, Any]] = None
+        self.intent_slot: Optional[datetime] = None
         self.vars: Dict[str, str] = {}
         self._seq = 0
         self.refresh_vars()
@@ -120,6 +132,7 @@ class Ep:
         return max(self.end.values())
 
     def _add(self, ev: Dict[str, Any]) -> Dict[str, Any]:
+        self.fix_caller()
         ev["_seq"] = self._seq
         self._seq += 1
         self.events.append(ev)
@@ -205,18 +218,26 @@ class Ep:
         return cid, self.result(cid, content, latency)
 
     def claim(self, key: str, cid: str, act: Optional[str] = "claim", text: Optional[str] = None,
-              **kw: Any) -> Dict[str, Any]:
-        """Elle speech that depends on result `cid`: it starts after the result,
-        after Elle's own previous line, and after the caller stops talking."""
-        res = self.results[cid]
-        start = max(res["t"] + self.rng.uniform(0.18, 0.55), self.end["elle"] + 0.12,
+              also: Sequence[str] = (), **kw: Any) -> Dict[str, Any]:
+        """Elle speech that depends on result `cid` (and on the results in `also`):
+        it starts after every one of them, after Elle's own previous line, and
+        after the caller stops talking. One claim span is recorded per result."""
+        deps = [cid] + [c for c in also if c != cid]
+        res_t = max(self.results[c]["t"] for c in deps)
+        start = max(res_t + self.rng.uniform(0.18, 0.55), self.end["elle"] + 0.12,
                     self.end["caller"] + self.gap(0.3, 0.1))
         ev = self.say("elle", text if text is not None else self.line(key, **kw), at=start, act=act)
-        self.claims.append((ev, cid))
+        for c in deps:
+            self.claims.append((ev, c))
         return ev
 
-    def gate(self, cid: str, readback: Dict[str, Any], confirm: Dict[str, Any]) -> None:
-        self.gates.append((cid, readback, confirm))
+    def gate_booking(self, cid: str, intent: Dict[str, Any], details_cid: str) -> None:
+        """A booking is gated by the caller event that asked for or accepted the
+        time and by the get_caller_details call that supplied name and email."""
+        self.gates.append({"call": cid, "intent": intent, "details": details_cid})
+
+    def gate_consent(self, cid: str, question: Dict[str, Any], confirm: Dict[str, Any]) -> None:
+        self.gates.append({"call": cid, "question": question, "confirm": confirm})
 
     def write_at(self) -> float:
         return self.floor() + self.gap(0.2, 0.08, 0.06, 0.4)
@@ -255,8 +276,16 @@ class Ep:
         # A backchannel never takes the floor.
         self.end = {k: max(saved[k], self.end[k]) if k == ch else saved[k] for k in saved}
 
+    # --- caller on file -------------------------------------------------------------------
+    def fix_caller(self) -> None:
+        """Freeze who is on file at the first event: the stored name and email are
+        the ones the caller had before this call, whatever they correct later."""
+        if not hasattr(self, "caller_on_file"):
+            self.caller_on_file = {"name": self.p.name, "email": self.p.email} if self.on_file else None
+
     # --- finish ---------------------------------------------------------------------------
     def finish(self, ep_id: str, split: str) -> Dict[str, Any]:
+        self.fix_caller()
         evs = sorted(self.events, key=lambda e: (e["t"], e["_seq"]))
         # Call ids are c1..cN in time order, whatever order the beats created them.
         remap: Dict[str, str] = {}
@@ -268,12 +297,20 @@ class Ep:
                 e["id"] = remap[e["id"]]
         idx = {id(e): i for i, e in enumerate(evs)}
         claim_spans = [{"event_index": idx[id(e)], "depends_on": remap[cid]} for e, cid in self.claims]
-        claim_spans.sort(key=lambda c: c["event_index"])
-        gates = [{"call_id": remap[cid], "readback_index": idx[id(rb)], "confirm_index": idx[id(cf)]}
-                 for cid, rb, cf in self.gates]
+        claim_spans.sort(key=lambda c: (c["event_index"], int(c["depends_on"][1:])))
+        gates = []
+        for g in self.gates:
+            if "intent" in g:
+                gates.append({"call_id": remap[g["call"]], "intent_index": idx[id(g["intent"])],
+                              "details_call_id": remap[g["details"]]})
+            else:
+                gates.append({"call_id": remap[g["call"]], "question_index": idx[id(g["question"])],
+                              "confirm_index": idx[id(g["confirm"])]})
+        for e in evs:  # a post-booking sentence names the details call its facts came from
+            if "_details" in e:
+                e["refers"]["details"] = remap[e["_details"]]
         calls = [e for e in evs if e["type"] == "tool_call"]
-        reads = {"check_availability", "get_my_bookings"}
-        n_r = sum(1 for c in calls if c["name"] in reads)
+        n_r = sum(1 for c in calls if c["name"] in READ_TOOLS)
         n_w = len(calls) - n_r
         kind = "none" if not calls else "read" if not n_w else "write" if not n_r else "mixed"
         out_events = []
@@ -297,8 +334,8 @@ class Ep:
             "scenario": self.scenario,
             "seed": self.seed,
             "now": T.iso(self.now),
-            "context": {"channel": self.channel, "caller_number": self.p.phone, "notes": self.notes,
-                        "notes_names": self.notes_names},
+            "context": {"channel": self.channel, "caller_number": self.p.phone,
+                        "caller_on_file": self.caller_on_file},
             "events": out_events,
             "labels": labels,
         }

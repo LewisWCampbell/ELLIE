@@ -4,8 +4,14 @@ Keys are dialogue acts. Each value is a list of templates formatted with the
 episode's variables ({when}, {slot}, {slot_long}, {zone}, {alt1}, {alt2},
 {name}, {first}, {email_sp}, {company}, {role}, {topic}, {when2}, {slot2}).
 Elle's lines follow src/persona.ts: one or two short spoken sentences,
-contractions, no lists, times read back with the timezone, tentative until
+contractions, no lists, times said with the timezone, tentative until
 Lewis confirms, never narrate bookkeeping.
+
+Contract v3: Elle says a caller's name or email only when a tool result (or
+the caller-on-file line of the prompt) gave it to her. So {first} appears only
+in the greeting for a caller on file, and {email_sp} only in lines spoken after
+a get_caller_details result. There is no readback and no "is that right?"
+before a booking: the post-booking lines (elle_booked*) say what was booked.
 
 Everything is fictional: example.com/.org/.net addresses only, invented names
 and companies, 555 numbers only.
@@ -56,6 +62,13 @@ EN = {
         "Quick heads up, this call's recorded. I'm Elle, Lewis's AI assistant. Who's calling?",
         "Hello, this is Elle. I'm Lewis's AI assistant, not Lewis himself. What can I do for you?",
         "Hi, Elle here, Lewis's assistant. What's on your mind?",
+    ],
+    # A returning caller (context.caller_on_file): greeted by first name, never asked who they are.
+    "elle_greet_known": [
+        "Hi {first}, it's Elle, Lewis's AI assistant. Good to hear from you again. How can I help?",
+        "Hi {first}, good to hear from you again. This is Elle, Lewis's AI assistant. What can I do for you?",
+        "Hello {first}, Elle here, Lewis's AI assistant. Nice to have you back. What's on your mind?",
+        "Hey {first}, welcome back. It's Elle, Lewis's AI assistant. What brings you in today?",
     ],
     "caller_open_book": [
         "Hi, I'd like to set up a call with Lewis.",
@@ -132,6 +145,14 @@ EN = {
         "That one's open. Shall I set up the call for {slot}?",
         "Looks like {slot} is free. Want to lock it in?",
     ],
+    # The caller already asked to book this time (or picked it), so no offer: she goes ahead.
+    "elle_free_go": [
+        "Good news, he's open {slot}.",
+        "Great, {slot} is free.",
+        "Yep, {slot} is open, so let's get that set up.",
+        "{slot_cap} works, he's free then.",
+        "That one's open.",
+    ],
     "elle_free_noop": [
         "He's open {slot}.",
         "Yep, {slot} is free on his calendar.",
@@ -160,11 +181,6 @@ EN = {
         "{alt2} works better.", "Let's go with {alt2}.", "The second one.", "{alt2_cap}, please.",
         "I'll take the later one.",
     ],
-    "elle_alt_offer": [
-        "{pick_cap} it is. Want me to pencil you in?",
-        "Great, {pick}. Should I book that for you?",
-        "Perfect. Want me to hold {pick} for you?",
-    ],
     "caller_hold_off": [
         "Okay, good to know. Let me check with my team first.",
         "Great, I'll circle back once I've looked at my week.",
@@ -178,10 +194,23 @@ EN = {
         "Of course. Anything else I can help with?",
         "Totally fine. Feel free to reach out any time.",
     ],
+    # The calendar could not be read: never a guess, and no booking without a FREE check.
     "elle_unknown": [
-        "Hmm, I can't pull up his calendar right now, so I don't want to guess. I can put {slot} in as a request for Lewis to confirm, or try again in a moment. Which would you prefer?",
-        "Sorry, I'm not able to see his calendar at the moment. Want me to try again, or send {slot} to Lewis as a request?",
+        "Hmm, I can't pull up his calendar right now, so I don't want to guess about {slot}. Want me to try again?",
+        "Sorry, I'm not able to see his calendar at the moment. Should I try once more?",
         "I'm having trouble reading his calendar just now, so I can't say if that's open. Should I try once more?",
+    ],
+    "elle_unknown_again": [
+        "I'm sorry, I still can't see his calendar, so I can't book anything right now. Could you call or text this number a little later?",
+        "Still no luck reading his calendar, I'm afraid, and I don't want to guess. Please call or text back in a bit and we'll get it sorted.",
+    ],
+    "caller_no_wait": [
+        "No, that's okay, I can't wait right now.", "Don't worry about it, I'm short on time.",
+        "Nah, leave it for now.",
+    ],
+    "elle_unknown_later": [
+        "No problem. I can't see his calendar right now, so nothing's booked. Just call or text this number later and we'll find a time.",
+        "Of course. I couldn't check his calendar, so I haven't booked anything. Call or text back whenever suits you.",
     ],
     "elle_input_error": [
         "Sorry, I didn't quite get the time. Which day and time did you mean?",
@@ -273,7 +302,7 @@ EN = {
         "Yeah, it's {name}.",
     ],
     "elle_ask_email": [
-        "Thanks, {first}. And what's the best email for the invite?",
+        "Thanks. And what's the best email for the invite?",
         "Great. What email should Lewis send the invite to?",
         "And an email address for the confirmation?",
         "Thanks. What's a good email for you?",
@@ -307,7 +336,7 @@ EN = {
         "It's {bad_email_sp}.", "{bad_email_sp}.",
     ],
     "elle_email_clarify": [
-        "Sorry, I didn't catch the end of that. Was that {email_guess_sp}?",
+        "Sorry, I didn't get a full address there. Could you give me the email once more?",
         "I think I missed part of it. Could you say the whole email again?",
         "Hmm, that doesn't sound like a full address. What comes after the at?",
     ],
@@ -316,19 +345,8 @@ EN = {
         "Right, {email_sp}.",
         "Yes, {email_sp}, sorry.",
     ],
-    # --- readback / confirm ----------------------------------------------------------
-    "elle_readback": [
-        "Just to confirm, that's {slot_long} {zone}, under {name}, with the invite going to {email_sp}. Sound right?",
-        "So I've got a thirty-minute call on {slot_long} {zone}, for {name} at {email_sp}. Is that right?",
-        "Let me read that back: {slot_long} {zone}, {name}, {email_sp}. All good?",
-        "Okay, {slot_long} {zone}, under {name}, and I'll send the invite to {email_sp}. Does that look right?",
-        "Great, so that's {name} on {slot_long} {zone}, email {email_sp}. Shall I book it?",
-    ],
-    "caller_confirm": [
-        "Yes, that's right.", "Yep.", "Correct.", "That's it.", "Yes.", "Yep, perfect.",
-        "Sounds right.", "Yes, go ahead.", "Yeah, book it.", "That's correct.",
-    ],
-    "caller_decline_readback": [
+    # --- caller backs out before anything is booked ------------------------------------
+    "caller_decline_book": [
         "Hmm, actually, hold off for now.",
         "No, wait, let me check my calendar first.",
         "Actually, don't book it yet.",
@@ -339,27 +357,48 @@ EN = {
         "Of course, nothing's booked. Reach out whenever you like.",
         "Totally fine, I'll leave it. Anything else I can help with?",
     ],
-    "caller_correct_readback": [
-        "Close, but I said {when2}.",
-        "Not quite, it was {when2}.",
-        "Oh, sorry, I meant {when2}.",
-    ],
     # --- write beats --------------------------------------------------------------------
+    # After the booking result: the time with the timezone, tentative, where the invite
+    # goes (email from the get_caller_details result, said once). The email sits mid-line
+    # so a caller can cut in to correct it.
+    "elle_booked": [
+        "You're penciled in for {slot_long} {zone}, with the invite going to {email_sp}. It's tentative until Lewis confirms, and you can text this number any time to change or cancel.",
+        "All set, that's {slot_long} {zone}, and Lewis will confirm by email to {email_sp}. It's tentative until he does, and you can text this number if anything changes.",
+        "Done, I've got {slot_long} {zone} down as tentative. The invite goes to {email_sp} once Lewis confirms, and you can text this number to change or cancel it.",
+        "Great, {slot_long} {zone} is held for you, pending Lewis's confirmation. He'll email you at {email_sp}, and you can text this number any time to move it.",
+    ],
+    # A new time after an earlier booking in the same call: the earlier hold is replaced.
+    "elle_booked_moved": [
+        "Done, I've moved you to {slot_long} {zone}, and that replaces the earlier hold. The invite goes to {email_sp}, and it's still tentative until Lewis confirms.",
+        "All set, you're now down for {slot_long} {zone} instead of the earlier time. Lewis will confirm by email to {email_sp}, so it's tentative until then.",
+        "Okay, {slot_long} {zone} it is, and the earlier hold is replaced. The invite goes to {email_sp}, pending Lewis's confirmation.",
+    ],
+    # After an `Updated:` result (the caller corrected the email).
+    "elle_email_updated": [
+        "Fixed, the invite will go to {email_sp} instead. Everything else is the same, still tentative until Lewis confirms.",
+        "Got it, that's updated to {email_sp}. The time hasn't changed, and it's still tentative until Lewis confirms.",
+        "Thanks, I've changed it to {email_sp}. Same time, still pending Lewis's confirmation.",
+    ],
+    "caller_change_time_after": [
+        "Oh wait, actually, could we move it to {when2} instead?",
+        "Sorry, one thing. Can we make it {when2} instead?",
+        "Actually, {when2} would be better for me. Can you switch it?",
+        "Hmm, on second thought, can you book {when2} instead?",
+    ],
+    "elle_write_landed_cancel": [
+        "Okay. Heads up, that went through just before you said so: {slot_long} {zone}, with the invite going to {email_sp}. It's only a tentative request, nothing's final until Lewis confirms. If you'd like it gone, just text this number and say cancel. Or we can keep it.",
+        "Understood. It had already gone in as a tentative hold for {slot_long} {zone}, invite to {email_sp}, pending Lewis's confirmation. You can text this number any time to cancel it, or keep it if you change your mind.",
+    ],
     "elle_book_pre": [
         "Perfect, booking that now.",
         "Great, one moment.",
         "Okay, putting that in.",
         "Lovely, let me set that up.",
-        "",
     ],
-    "elle_booked": [
-        "You're penciled in for {slot}. It's tentative until Lewis confirms, and he'll confirm by email to {email_sp}. You can also text this number any time to change or cancel.",
-        "All set, {slot} is held for you. It's pending Lewis's confirmation, so watch for an email at {email_sp}. And if anything changes, just text this number.",
-        "Done, I've got {slot} down as tentative. Lewis will confirm by email to {email_sp}, and you can text this number to change or cancel it.",
-        "Great, {slot} is penciled in, pending Lewis's confirmation. He'll email you at {email_sp}, and you can text this number any time to move it.",
-    ],
-    "elle_booked_request_only": [
-        "I've put {slot} in as a request. It's not final until Lewis confirms by email to {email_sp}. You can text this number to change or cancel.",
+    "elle_email_fix_pre": [
+        "Thanks, updating that.",
+        "Got it, let me fix that.",
+        "Okay, one moment while I change it.",
     ],
     "elle_slot_taken": [
         "Oh, I'm sorry, someone grabbed that exact time a moment ago. Want me to check {alt1}?",
@@ -506,22 +545,10 @@ EN = {
         "Oh wait, use {email_sp} instead, that's my work one.",
         "Hang on, it's {email_sp}, not that one.",
     ],
-    "elle_email_fixed_ack": [
-        "Thanks, updating that.",
-        "Got it, I'll use that one.",
-        "Okay, changed.",
-    ],
-    "caller_eager_confirm": [
-        "Yep, that's right.", "Yes, perfect.", "Yeah, go for it.", "That's right, yes.",
-    ],
     "caller_cut_cancel": [
         "Oh wait, hang on, actually don't book that.",
         "Sorry, hold on, can you cancel that?",
         "Wait, actually, never mind, don't book it.",
-    ],
-    "elle_write_landed_cancel": [
-        "Okay. Heads up, that went through just before you said so, but it's only a tentative request, nothing's final until Lewis confirms. If you'd like it gone, just text this number and say cancel. Or we can keep it.",
-        "Understood. It had already gone in as a tentative hold, pending Lewis's confirmation. You can text this number any time to cancel it, or keep it if you change your mind.",
     ],
     "caller_keep_it": [
         "Oh, okay, you know what, just keep it.", "Ah, fine, leave it then.", "Actually that's okay, keep it.",
@@ -572,24 +599,14 @@ EN = {
         "Put me down as {name} and book it, please.",
     ],
     "elle_need_email": [
-        "Happy to, {first}. I just need an email for the invite first.",
+        "Happy to. I just need an email for the invite first.",
         "Sure thing. What email should the invite go to?",
         "Almost there, I just need an email so Lewis can confirm.",
-    ],
-    "elle_free_readback": [
-        "Good, {slot} is open. So that's {slot_long} {zone}, under {name}, invite to {email_sp}. Sound right?",
-        "That one's free. Same details, then: {slot_long} {zone}, {name}, {email_sp}. Shall I book it?",
     ],
     "elle_check_first": [
         "Let me make sure that's open first.",
         "Let me check that time before I book anything.",
         "One sec, I'll check his calendar first.",
-    ],
-    "elle_unknown_request_ok": [
-        "Okay, I'll put it in as a request for Lewis to confirm.",
-    ],
-    "caller_request_ok": [
-        "Sure, send it as a request.", "Yeah, just put the request in.",
     ],
     "caller_switch_es": [
         "Sorry, could we speak in Spanish? ¿Podemos hablar en español?",
@@ -602,6 +619,11 @@ ES = {
         "Hola, soy Elle, la asistente de inteligencia artificial de Lewis. ¿Con quién hablo?",
         "¡Hola! Soy Elle, la asistente de Lewis. ¿En qué te puedo ayudar?",
         "Hola, te habla Elle, la asistente virtual de Lewis. ¿Qué te trae por aquí?",
+    ],
+    "elle_greet_known": [
+        "Hola {first}, soy Elle, la asistente de inteligencia artificial de Lewis. Qué gusto saludarte otra vez. ¿En qué te puedo ayudar?",
+        "¡Hola {first}! Te habla Elle, la asistente virtual de Lewis. Qué bueno tenerte de vuelta. ¿Qué necesitas?",
+        "Hola {first}, qué gusto oírte de nuevo. Soy Elle, la asistente de Lewis. ¿En qué te ayudo?",
     ],
     "caller_open_book": [
         "Hola, quisiera agendar una llamada con Lewis.",
@@ -649,6 +671,11 @@ ES = {
         "{slot_cap} está disponible. ¿Quieres que lo reserve?",
         "Sí, tiene libre {slot}. ¿Lo agendamos?",
     ],
+    "elle_free_go": [
+        "Buenas noticias, está libre {slot}.",
+        "Perfecto, {slot} está disponible.",
+        "Sí, tiene libre {slot}, así que lo dejamos listo.",
+    ],
     "elle_free_noop": ["Está libre {slot}.", "Sí, {slot} está disponible."],
     "elle_busy": [
         "{slot_cap} está ocupado, pero tiene libre {alt1} o {alt2}. ¿Te sirve alguno?",
@@ -658,7 +685,6 @@ ES = {
     "elle_busy_none": ["Ese horario está ocupado y no hay nada cerca. ¿Te sirve otro día?"],
     "caller_pick_alt1": ["{alt1_cap} me funciona.", "El primero, por favor.", "Mejor {alt1}."],
     "caller_pick_alt2": ["El segundo.", "Prefiero {alt2}.", "{alt2_cap}, por favor."],
-    "elle_alt_offer": ["Perfecto, {pick}. ¿Te lo aparto?"],
     "caller_hold_off": [
         "Perfecto, lo consulto con mi equipo primero.",
         "Bueno, lo pienso y te vuelvo a llamar.",
@@ -668,7 +694,7 @@ ES = {
         "Claro, aquí estoy cuando lo quieras reservar.",
     ],
     "elle_unknown": [
-        "Ahora mismo no puedo ver su calendario, así que no quiero adivinar. ¿Lo intento otra vez, o le paso {slot} a Lewis como solicitud?",
+        "Ahora mismo no puedo ver su calendario, así que no quiero adivinar. ¿Lo intento otra vez?",
     ],
     "caller_retry": ["Sí, inténtalo otra vez.", "Prueba de nuevo, por favor."],
     "caller_ramble": [
@@ -706,22 +732,18 @@ ES = {
     ],
     "caller_give_name": ["Soy {name}.", "{name}.", "A nombre de {name}."],
     "elle_ask_email": [
-        "Gracias, {first}. ¿Y a qué correo te mando la invitación?",
+        "Gracias. ¿Y a qué correo te mando la invitación?",
         "¿Cuál es tu correo electrónico?",
     ],
     "caller_give_email": ["Es {email_sp}.", "{email_sp}."],
     "caller_give_all": ["Soy {name}, y mi correo es {email_sp}."],
-    "elle_readback": [
-        "Para confirmar: {slot_long}, {zone}, a nombre de {name}, y la invitación va a {email_sp}. ¿Está bien?",
-        "Entonces queda {slot_long}, {zone}, para {name}, al correo {email_sp}. ¿Correcto?",
-    ],
-    "caller_confirm": ["Sí, correcto.", "Sí.", "Exacto.", "Así es.", "Sí, adelante."],
-    "caller_decline_readback": ["Mejor espera, no lo reserves todavía.", "No, déjame revisar primero."],
+    "caller_decline_book": ["Mejor espera, no lo reserves todavía.", "No, déjame revisar primero."],
     "elle_decline_ack": ["Claro, no reservo nada. Llama cuando quieras."],
-    "elle_book_pre": ["Perfecto, lo reservo ahora.", "Listo, un momento.", ""],
+    "elle_book_pre": ["Perfecto, lo reservo ahora.", "Listo, un momento."],
     "elle_booked": [
-        "Listo, quedó apartado {slot}. Es provisional hasta que Lewis lo confirme por correo a {email_sp}. Y puedes escribir a este número para cambiarlo o cancelarlo.",
-        "Ya está, {slot} queda pendiente de la confirmación de Lewis. Te escribirá a {email_sp}, y si algo cambia, mándanos un mensaje a este número.",
+        "Listo, quedó apartado {slot_long}, {zone}, y la invitación va a {email_sp}. Es provisional hasta que Lewis lo confirme, y puedes escribir a este número para cambiarlo o cancelarlo.",
+        "Ya está, {slot_long}, {zone}, queda pendiente de la confirmación de Lewis. Te escribirá a {email_sp}, y si algo cambia, mándanos un mensaje a este número.",
+        "Hecho, te anoté para {slot_long}, {zone}. Lewis lo confirma por correo a {email_sp}, así que es provisional hasta entonces, y puedes escribir a este número si necesitas moverlo.",
     ],
     "elle_sms_offer_a": [
         "Una cosa más: puedo enviarte mensajes de texto sobre tu reserva a este número, y puedes responder cuando quieras para cambiarla o cancelarla.",
@@ -742,8 +764,7 @@ ES = {
     "elle_premature_free": ["¡Sí, está libre {slot}! ¿Te lo aparto?"],
     "elle_premature_retract": ["Ay, perdón, en realidad está ocupado. ¿Qué tal {alt1}?"],
     "caller_push_book": ["Soy {name}. ¿Lo puedes reservar ya?"],
-    "elle_need_email": ["Claro, {first}. Solo necesito un correo para la invitación."],
-    "elle_free_readback": ["Bien, {slot} está libre. Entonces: {slot_long}, {zone}, a nombre de {name}, al correo {email_sp}. ¿Está bien?"],
+    "elle_need_email": ["Claro. Solo necesito un correo para la invitación."],
     "elle_check_first": ["Déjame confirmar primero que esté libre.", "Un momento, reviso su calendario primero."],
     "elle_switch_ack": [
         "¡Claro que sí! Seguimos en español. ¿Qué día y hora te vienen bien?",
@@ -753,7 +774,7 @@ ES = {
 
 BANKS = {"en": EN, "es": ES}
 
-# Phrases Elle must never use around a silent save_user_fact (persona rule 5).
+# Phrases Elle must never use around a silent write such as record_sms_consent (persona rule 5).
 NARRATION_MARKERS = [
     "make a note", "making a note", "noting that", "i'll note", "saving", "i've saved",
     "save that", "jot that", "write that down", "remember that for", "in my notes",

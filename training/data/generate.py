@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import elle_time as T  # noqa: E402
 from episode import Ep  # noqa: E402
 from scenarios import BY_NAME, FAMILIES, SCENARIOS, RetryScenario, Scenario  # noqa: E402
+from serialize import tool_call_text  # noqa: E402
 
 SPLIT_SEED_BASE = {"train": 0, "val": 1_000_000, "test": 2_000_000}
 DEFAULT_HOLDOUT = "slot_conflict"
@@ -146,6 +147,22 @@ def stats_markdown(splits: Dict[str, List[Dict[str, Any]]], args_line: str, hold
         lines.append(f"| {k} | {kinds[k]} | {_pct(kinds[k], len(allep))} |")
     calls = Counter(ev["name"] for e in allep for ev in e["events"] if ev["type"] == "tool_call")
     lines += ["", "| tool | calls |", "|---|---|"] + [f"| {k} | {v} |" for k, v in sorted(calls.items())]
+
+    # Contract v3: who is on file, and how long a compact call is in the text stream.
+    on_file = sum(1 for e in allep if (e.get("context") or {}).get("caller_on_file"))
+    booked = Counter()
+    for e in allep:
+        res = {ev["id"]: ev["content"] for ev in e["events"] if ev["type"] == "tool_result"}
+        for ev in e["events"]:
+            if ev["type"] == "tool_call" and ev["name"] == "book_intro_call":
+                booked[res.get(ev["id"], "").split(":")[0].split(" ")[0]] += 1
+    lens = [len(tool_call_text(ev)) for e in allep for ev in e["events"] if ev["type"] == "tool_call"]
+    lens_json = [len(tool_call_text(ev, "json")) for e in allep for ev in e["events"] if ev["type"] == "tool_call"]
+    lines += ["", "## Contract v3", "",
+              f"- Episodes with a caller on file: {on_file} ({_pct(on_file, len(allep))})",
+              "- book_intro_call results by first word: " + (", ".join(f"{k} {v}" for k, v in sorted(booked.items())) or "-"),
+              f"- Compact call span, characters: mean {sum(lens) / max(1, len(lens)):.1f}, max {max(lens, default=0)}"
+              f" (JSON form: mean {sum(lens_json) / max(1, len(lens_json)):.1f}, max {max(lens_json, default=0)})"]
 
     lines += ["", "## Tool latency (seconds)", "", "min / p25 / median / p75 / p95 / max", "",
               "| tool | n | quantiles | share > 0.7 s |", "|---|---|---|---|"]

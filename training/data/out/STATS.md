@@ -8,9 +8,9 @@ Synthetic text-and-timing episodes (no audio). See README.md for what they are a
 
 | split | episodes | negatives | Spanish (any) | held-out family | events/ep (mean) | duration s (mean) |
 |---|---|---|---|---|---|---|
-| train | 2000 | 137 (6.8%) | 217 (10.8%) | 0 | 19.6 | 65.4 |
-| val | 200 | 13 (6.5%) | 19 (9.5%) | 0 | 18.5 | 60.9 |
-| test | 200 | 10 (5.0%) | 13 (6.5%) | 50 | 21.6 | 70.4 |
+| train | 2000 | 114 (5.7%) | 177 (8.8%) | 0 | 18.9 | 57.4 |
+| val | 200 | 12 (6.0%) | 18 (9.0%) | 0 | 18.1 | 53.5 |
+| test | 200 | 8 (4.0%) | 11 (5.5%) | 50 | 22.1 | 62.3 |
 
 Held-out family: `slot_conflict` (test only).
 
@@ -18,57 +18,72 @@ Held-out family: `slot_conflict` (test only).
 
 | scenario | family | train | val | test |
 |---|---|---|---|---|
-| availability_free | read_basic | 101 | 16 | 6 |
-| availability_busy_alternatives | read_basic | 101 | 11 | 5 |
-| bookings_none | bookings_read | 58 | 5 | 5 |
-| bookings_one | bookings_read | 63 | 11 | 4 |
-| bookings_two | bookings_read | 46 | 9 | 6 |
-| availability_slow_filler | wait_handling | 105 | 12 | 8 |
-| bookings_slow_filler | wait_handling | 43 | 2 | 8 |
-| availability_caller_keeps_talking | wait_handling | 95 | 7 | 9 |
-| availability_mind_change_mid_wait | mind_change | 96 | 8 | 6 |
-| availability_unknown_recovery | read_error | 73 | 6 | 9 |
-| availability_timeout | read_error | 49 | 5 | 8 |
-| book_after_availability_free | booking | 135 | 19 | 7 |
-| book_after_availability_busy | booking | 121 | 15 | 7 |
-| book_direct_details_first | booking | 57 | 8 | 6 |
-| book_readback_declined | write_guard | 69 | 7 | 2 |
-| book_readback_corrected | write_guard | 58 | 1 | 1 |
-| book_missing_email | write_guard | 62 | 5 | 5 |
-| book_invalid_email | write_guard | 51 | 2 | 1 |
-| book_past_time | write_guard | 54 | 5 | 2 |
-| mind_change_after_readback | mind_change | 60 | 0 | 2 |
+| availability_free | read_basic | 89 | 12 | 6 |
+| availability_busy_alternatives | read_basic | 75 | 11 | 4 |
+| bookings_none | bookings_read | 44 | 4 | 1 |
+| bookings_one | bookings_read | 61 | 7 | 6 |
+| bookings_two | bookings_read | 44 | 6 | 1 |
+| availability_slow_filler | wait_handling | 71 | 14 | 9 |
+| bookings_slow_filler | wait_handling | 49 | 6 | 4 |
+| availability_caller_keeps_talking | wait_handling | 65 | 4 | 8 |
+| availability_mind_change_mid_wait | mind_change | 70 | 7 | 8 |
+| availability_unknown_recovery | read_error | 64 | 3 | 5 |
+| availability_timeout | read_error | 38 | 3 | 2 |
+| book_after_availability_free | booking | 145 | 13 | 16 |
+| book_after_availability_busy | booking | 83 | 11 | 7 |
+| book_direct_details_first | booking | 52 | 9 | 2 |
+| book_declined_before_write | write_guard | 46 | 7 | 3 |
+| book_email_corrected | write_guard | 51 | 4 | 2 |
+| book_missing_email | write_guard | 59 | 9 | 6 |
+| book_invalid_email | write_guard | 33 | 3 | 4 |
+| book_past_time | write_guard | 44 | 5 | 1 |
+| time_change_after_booking | mind_change | 33 | 4 | 1 |
 | book_slot_taken_race | slot_conflict | 0 | 0 | 26 |
 | book_busy_at_write | slot_conflict | 0 | 0 | 24 |
-| book_write_error | write_error | 33 | 4 | 3 |
-| save_fact_midconversation | silent_save | 88 | 7 | 6 |
-| book_then_when_again_memory | followup | 43 | 4 | 7 |
-| book_then_when_again_lookup | followup | 56 | 9 | 2 |
-| returning_caller_notes | identity | 50 | 3 | 4 |
-| barge_in_then_book | overlap | 50 | 4 | 6 |
-| es_switch_midcall | bilingual | 46 | 2 | 5 |
-| neg_premature_availability_claim | negative | 45 | 4 | 2 |
-| neg_premature_bookings_claim | negative | 23 | 1 | 3 |
-| neg_book_without_readback | negative | 38 | 3 | 4 |
-| neg_dead_air_wait | negative | 31 | 5 | 1 |
+| book_write_error | write_error | 27 | 0 | 1 |
+| chat_then_book | small_talk | 86 | 5 | 4 |
+| book_then_when_again_memory | followup | 38 | 1 | 2 |
+| book_then_when_again_lookup | followup | 37 | 2 | 2 |
+| returning_caller | identity | 47 | 4 | 1 |
+| barge_in_then_book | overlap | 48 | 0 | 1 |
+| es_switch_midcall | bilingual | 29 | 3 | 2 |
+| interrupt_claim_correct_time | interrupt | 47 | 5 | 5 |
+| interrupt_wait_correction | interrupt | 64 | 6 | 3 |
+| interrupt_booked_fix_email | interrupt | 34 | 4 | 8 |
+| interrupt_offer_eager_yes | interrupt | 37 | 5 | 0 |
+| interrupt_cancel_during_write | interrupt | 38 | 3 | 2 |
+| interrupt_pick_alt_early | interrupt | 49 | 4 | 5 |
+| side_question_during_wait | interrupt | 43 | 2 | 4 |
+| talk_collision | interrupt | 46 | 2 | 6 |
+| neg_premature_availability_claim | negative | 43 | 4 | 2 |
+| neg_premature_bookings_claim | negative | 14 | 1 | 2 |
+| neg_book_without_intent | negative | 29 | 3 | 4 |
+| neg_dead_air_wait | negative | 28 | 4 | 0 |
 
-33 scenarios in 15 families.
+41 scenarios in 16 families.
 
 ## Read / write mix (episode kind)
 
 | kind | episodes | share |
 |---|---|---|
-| read | 842 | 35.1% |
-| write | 49 | 2.0% |
-| mixed | 1509 | 62.9% |
-| none | 0 | 0.0% |
+| read | 824 | 34.3% |
+| write | 0 | 0.0% |
+| mixed | 1525 | 63.5% |
+| none | 51 | 2.1% |
 
 | tool | calls |
 |---|---|
-| book_intro_call | 1502 |
-| check_availability | 2455 |
-| get_my_bookings | 382 |
-| save_user_fact | 1352 |
+| book_intro_call | 1716 |
+| check_availability | 2770 |
+| get_caller_details | 1830 |
+| get_my_bookings | 317 |
+| record_sms_consent | 395 |
+
+## Contract v3
+
+- Episodes with a caller on file: 993 (41.4%)
+- book_intro_call results by first word: Done 1535, Error 28, Someone 26, That 24, Updated 103
+- Compact call span, characters: mean 41.0, max 48 (JSON form: mean 83.5, max 97)
 
 ## Tool latency (seconds)
 
@@ -76,35 +91,36 @@ min / p25 / median / p75 / p95 / max
 
 | tool | n | quantiles | share > 0.7 s |
 |---|---|---|---|
-| book_intro_call | 1502 | 0.60 / 1.03 / 1.42 / 1.82 / 2.14 / 2.20 | 93.9% |
-| check_availability | 2455 | 0.18 / 0.48 / 0.89 / 1.89 / 2.64 / 5.95 | 55.6% |
-| get_my_bookings | 382 | 0.18 / 0.50 / 1.04 / 1.84 / 2.52 / 2.99 | 56.0% |
-| save_user_fact | 1352 | 0.05 / 0.11 / 0.17 / 0.24 / 0.28 / 0.30 | 0.0% |
+| book_intro_call | 1716 | 0.60 / 1.00 / 1.43 / 1.82 / 2.14 / 2.57 | 93.9% |
+| check_availability | 2770 | 0.18 / 0.48 / 0.92 / 1.92 / 2.82 / 5.98 | 54.7% |
+| get_caller_details | 1830 | 0.12 / 0.26 / 0.38 / 0.50 / 1.00 / 1.10 | 15.8% |
+| get_my_bookings | 317 | 0.18 / 0.47 / 0.96 / 1.75 / 2.53 / 2.99 | 54.3% |
+| record_sms_consent | 395 | 0.05 / 0.12 / 0.18 / 0.24 / 0.29 / 0.30 | 0.0% |
 
 Read latency histogram (upper bucket edge, s):
 
 | <= s | reads |
 |---|---|
-| 0.25 | 162 |
-| 0.5 | 584 |
-| 0.7 | 513 |
-| 1.0 | 213 |
-| 1.5 | 371 |
-| 2.0 | 394 |
-| 3.0 | 532 |
-| 4.0 | 21 |
-| 6.5 | 47 |
+| 0.25 | 202 |
+| 0.5 | 647 |
+| 0.7 | 552 |
+| 1.0 | 203 |
+| 1.5 | 396 |
+| 2.0 | 396 |
+| 3.0 | 585 |
+| 4.0 | 61 |
+| 6.5 | 45 |
 
 ## Overlap and interruptions
 
-- Episodes with at least one cross-channel overlap: 1507 (62.8%)
-- Elle utterances cut off by a barge-in: 262
-- Backchannels: 2644
+- Episodes with at least one cross-channel overlap: 1565 (65.2%)
+- Elle utterances cut off by a barge-in: 667
+- Backchannels: 2753
 
 ## Negatives
 
 | negative_kind | episodes |
 |---|---|
-| dead_air | 37 |
-| premature_claim | 78 |
-| write_without_readback | 45 |
+| dead_air | 32 |
+| premature_claim | 66 |
+| write_without_intent | 36 |

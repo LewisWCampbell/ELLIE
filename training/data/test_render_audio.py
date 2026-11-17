@@ -133,7 +133,7 @@ class TestMeasured(unittest.TestCase):
             self.assertEqual(m["labels"]["expected_calls"], ep["labels"]["expected_calls"])
 
     def test_gaps_after_the_floor_are_kept(self):
-        for name in ("book_after_availability_busy", "save_fact_midconversation", "bookings_two"):
+        for name in ("book_after_availability_busy", "chat_then_book", "bookings_two"):
             for seed in range(10):
                 ep = build_episode(name, seed)
                 m = apply_measured(ep, fake_durs(ep))

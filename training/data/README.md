@@ -19,7 +19,7 @@ python3 training/data/serialize.py training/data/out/sample_val.jsonl 2   # look
 | file | what it is |
 |---|---|
 | `generate.py` | CLI and library entry point: `build_episode(scenario, seed)`, `generate_split(...)`, the STATS.md writer |
-| `scenarios.py` | the scenario grammar: beats (opening, check, details, readback, book, SMS consent, ...) and the 33 registered scenarios |
+| `scenarios.py` | the scenario grammar: beats (opening, check, details, get_caller_details, book, post-booking sentence, SMS consent, ...) and the 41 registered scenarios |
 | `episode.py` | `Ep`, the timeline builder: speech timing, overlap and barge-in, tool calls and results, fillers, claim spans and write gates |
 | `banks.py` | hand-written paraphrase banks (English and Spanish), fictional names, companies and topics |
 | `elle_time.py` | the owner's zone, spoken time phrases, `resolve()` against `now` (DST-correct), and ports of the production result formats |
@@ -57,14 +57,18 @@ python3 training/data/generate.py --out training/data/out --prefix sample_ \
 This follows the contract exactly. It also adds fields, which the contract allows ("either side may
 add fields"):
 
-- Speech events: `act` (dialogue act, e.g. `readback`, `confirm`, `filler`, `claim`, `pre_call`,
-  `barge_in`, `backchannel`), `lang` (when not English), `refers` (on readbacks: the `start`, `name`
+- Speech events: `act` (dialogue act, e.g. `booked`, `booked_update`, `accept`, `pick`, `ask_slot`,
+  `confirm`, `filler`, `claim`, `pre_call`, `barge_in`, `backchannel`), `lang` (when not English),
+  `book_intent: true` on a caller `ask_slot` that asks to book, `refers` (contract v3; see "Contract v3
+  fields" below; in v1 data, on readbacks: the `start`, `name`
   and `email` read back), and on a cut-off utterance `interrupted: true` plus `full_text`. On a
   cut-off line, `text` holds only the words actually spoken and `dur` is the spoken part.
-- Top level `context`: `channel`, `caller_number` (always `+1NNN55501NN`), `notes` (prior facts about
-  this phone number, as production injects them) and `notes_names`.
-- `labels`: `negative` and `negative_kind` (`premature_claim` | `write_without_readback` | `dead_air`),
-  `write_gates` (`[{call_id, readback_index, confirm_index}]`), `family`, `lang` (`en` | `es` | `en+es`),
+- Top level `context`: `channel`, `caller_number` (always `+1NNN55501NN`) and `caller_on_file`
+  (`{"name", "email"}` for a returning caller, else `null`; about 40% of episodes). `notes` and
+  `notes_names` are gone.
+- `labels`: `negative` and `negative_kind` (`premature_claim` | `write_without_intent` | `dead_air`),
+  `write_gates` (bookings: `{call_id, intent_index, details_call_id}`; SMS consent:
+  `{call_id, question_index, confirm_index}`), `family`, `lang` (`en` | `es` | `en+es`),
   `kind` (`read` | `write` | `mixed` | `none`), `held_out_family` (test only), and `expanded` (set by expand.py).
 
 Tool result strings mirror production word for word: `src/booking/availability.ts` (FREE, BUSY with
@@ -144,33 +148,61 @@ It checks the following:
 - **Splits.** (scenario, seed) must not repeat across or within splits, the file's split label must be
   consistent, and `--holdout-family` must not leak into train or val.
 
-## Scenarios (33, in 15 families)
+### Contract v3 fields
+
+There is no readback and no "is that right? / yes" before a booking. The flow is: the caller asks to
+book a time or accepts one, the time's own check is FREE, Elle calls `get_caller_details` (a new
+caller is asked for name and email first; a caller on file never is), then `book_intro_call(start)`,
+and after the result she says what was booked.
+
+- Caller intent events: act `accept` or `pick`, or an `ask_slot` with `book_intent: true`. Each carries
+  `refers: {"start"}` (the time it is about). A time change after a booking is an `ask_slot` with `book_intent: true, change: true`.
+  An Elle line that proposes a time (`propose`, the slot-taken apology) carries `refers: {"start"}` too.
+- Post-booking sentence: act `booked` (after `Done:`) or `booked_update` (after `Updated:`), with
+  `refers: {"start", "email", "details"}` where `details` is the id of the `get_caller_details` call the
+  email came from. It has two claim spans, one on the booking and one on the details call.
+- `get_caller_details` results: `ON FILE: <name>, <email spoken>.`, `HEARD: <name>, <email spoken>.`,
+  `MISSING: email. Ask for it.`, `MISSING: email (what was heard was not a valid address). Ask for it again.`
+  The email is always in the English spoken form, also in Spanish calls (Elle says it in Spanish).
+- A repeat `book_intro_call` for the same start after a caller `correction` returns
+  `Updated: the booking keeps its time and the invite now goes to <email spoken>. Tell the caller it is fixed. It is still tentative until Lewis confirms.`
+- Write gate for `book_intro_call` (`validate._booking_gate`): details ON FILE/HEARD and the latest
+  before the call; an unvoided intent for that start; the most recent check for that start FREE, with
+  no exception (after UNKNOWN Elle offers a retry and otherwise books nothing);
+  a repeat only as an update after a correction.
+- Text stream: `<tool>NAME</tool>` or `<tool>NAME YYYY-MM-DDTHH:MM</tool>` (`serialize.tool_call_text`,
+  `fmt="json"` for the v1 form; `extract_tool_calls` reads both).
+
+The validation notes and numbered decisions further down that mention readbacks, `save_user_fact` or
+notes describe v1 data.
+
+## Scenarios (41, in 16 families)
 
 | family | scenarios |
 |---|---|
 | read_basic | `availability_free`, `availability_busy_alternatives` |
 | bookings_read | `bookings_none`, `bookings_one`, `bookings_two` |
 | wait_handling | `availability_slow_filler`, `bookings_slow_filler`, `availability_caller_keeps_talking` |
-| mind_change | `availability_mind_change_mid_wait` (the result arrives for a time no longer wanted, and Elle checks the new one without reporting the stale result), `mind_change_after_readback` |
-| read_error | `availability_unknown_recovery` (UNKNOWN, then retry or book as a request), `availability_timeout` (slow UNKNOWN with fillers, then retry) |
+| mind_change | `availability_mind_change_mid_wait` (the result arrives for a time no longer wanted, and Elle checks the new one without reporting the stale result), `time_change_after_booking` (new check and new booking; the earlier hold is replaced) |
+| read_error | `availability_unknown_recovery` (UNKNOWN, then a retry; a second UNKNOWN or a caller who will not wait ends with no booking), `availability_timeout` (slow UNKNOWN with fillers, then retry) |
 | booking | `book_after_availability_free`, `book_after_availability_busy`, `book_direct_details_first` |
-| write_guard | `book_readback_declined` (no write), `book_readback_corrected`, `book_missing_email` (Elle asks; a refusal means no write), `book_invalid_email`, `book_past_time` (Elle catches it, so no past-time call is ever emitted) |
+| write_guard | `book_declined_before_write` (no write), `book_email_corrected` (details again, then an update of the same start), `book_missing_email` (Elle asks; a refusal means no write), `book_invalid_email`, `book_past_time` (Elle catches it, so no past-time call is ever emitted) |
 | slot_conflict | `book_slot_taken_race`, `book_busy_at_write` (held out by default) |
 | write_error | `book_write_error` (honest recovery, then a silent note) |
-| silent_save | `save_fact_midconversation` |
+| small_talk | `chat_then_book` (company and role come up; nothing is saved by Elle) |
 | followup | `book_then_when_again_memory`, `book_then_when_again_lookup` |
-| identity | `returning_caller_notes` (notes name an earlier caller, and Elle asks "who should I put this under?") |
+| identity | `returning_caller` (caller on file: greeted by name, never asked for name or email; any scenario can have a caller on file) |
 | overlap | `barge_in_then_book` (plus random barge-ins on greetings and offers, and backchannels, across scenarios) |
 | bilingual | `es_switch_midcall`; 10 other scenarios also render 15 to 20% of their episodes fully in Spanish |
-| negative | `neg_premature_availability_claim`, `neg_premature_bookings_claim`, `neg_book_without_readback`, `neg_dead_air_wait` |
+| negative | `neg_premature_availability_claim`, `neg_premature_bookings_claim`, `neg_book_without_intent` (books right after FREE when the caller only asked), `neg_dead_air_wait` |
 
 Most booking flows end with the production SMS consent flow. It covers every compliance element and
-ends with "yes or no?". Only a clear yes triggers `save_user_fact(sms_consent, …)`, followed by "a confirmation text is on its way".
+ends with "yes or no?". Only a clear yes triggers `record_sms_consent`, followed by "a confirmation text is on its way".
 
 ### Adding a scenario
 
 1. Write `def sc_my_case(ep): ...` in `scenarios.py`, composing the beats. The usual pattern is
-   `slot_and_ask`, `check`, `ep.claim`, `details`, `readback`, `confirm`, `book`, `booked`, `sms_consent`
+   `slot_and_ask`, `check`, `after_free`, `ep.claim`, `details`, `caller_details`, `book`, `booked`, `full_booking`, `sms_consent`
    and `bye`. Lines come from `ep.E(key)` / `ep.C(key)` using bank keys, so add new phrasings to
    `banks.py` (in `ES` too if the scenario supports Spanish).
 2. Use `ep.claim(...)` for anything that depends on a result, `ep.gate(...)` (through `book`) for writes,
