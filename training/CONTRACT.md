@@ -59,11 +59,22 @@ Greenleaf, a returning caller." or "The caller is not on file." Elle does not
 ask a returning caller for their name or email. For a new caller she asks for
 both, as before.
 
-**3. Facts are read back from a result, never from memory.** Before any readback
-Elle calls `get_caller_details`; the readback is a claim that depends on that
-result (and on the availability result for the time). The readback states the
-time with the timezone, the name and the email exactly as the result gives
-them.
+**3. No confirmation step: natural conversation (owner's decision, 2026-11-17).**
+There is no formal readback and no "is that right? / yes" exchange before a
+booking. Once the caller has asked to book or accepted an offered time ("yes
+please", "let's do Thursday at three"), and the time is known to be free and
+the caller's details are known, Elle books straight away. Facts still come from
+results, never from memory: Elle calls `get_caller_details` before booking,
+and AFTER the booking she says in one natural sentence what was booked, taken
+from the results: the time with the timezone, that it is tentative until Lewis
+confirms, and where the invite goes (the name is not repeated back to a
+returning caller; the email is said once, spoken form). If the caller then
+corrects something ("no, it's dot org"), Elle calls `get_caller_details` again
+and `book_intro_call` for the same start again; the system treats that as an
+update (`Updated: …`). If the caller changes the time, it is a new check and a
+new booking, and the system replaces the earlier tentative one. The SMS
+consent question stays a real yes/no question (a legal requirement), and is
+the only one.
 
 **4. Compact calls.** The text stream carries
 `<tool>NAME</tool>` or `<tool>NAME ARG</tool>`: the tool name, then for
@@ -81,11 +92,15 @@ is rejected by the parser (`tool_error`) and answered with
 **5. The booking guard (code, not the model).** `book_intro_call` is executed
 only if, in this call: (a) the most recent `check_availability` for that same
 start returned `FREE`; (b) `get_caller_details` returned `ON FILE` or `HEARD`;
-(c) after both, Elle read the details back and the caller then said yes (the
-system knows from the transcript; in evaluation, from the episode's caller
-`confirm` event); (d) that start is not already booked in this call. Otherwise
-the result is `NOT BOOKED: …` and nothing is written. `record_sms_consent` is
-executed only after the consent question and a yes.
+(c) the caller has asked to book or accepted that time (the system knows from
+the transcript; in evaluation, from the episode's caller events with act
+`accept`, `pick`, or an `ask_slot` that states booking intent, marked
+`book_intent: true`); a later decline or change of mind before the call voids
+it; (d) a repeat for a start already booked in this call is an update, not a
+second booking, and is allowed only after a caller correction. Otherwise the
+result is `NOT BOOKED: …` and nothing is written. There is no readback or yes
+requirement. `record_sms_consent` is executed only after the consent question
+and a yes.
 
 The first-run table and JSON format above describe v1 data and production's
 text tools; `serialize.py` and the parser accept both forms (`format: json |
