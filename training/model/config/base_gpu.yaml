@@ -50,6 +50,13 @@ prepare:
   max_frames: 1250                    # 100 s windows (moshi-finetune duration_sec: 100)
   tail_sec: 1.0
   prefer_dataset_serializer: true
+  # How a tool call is written in the text stream (CONTRACT.md v3 point 4).
+  #   compact  <tool>NAME</tool> or <tool>NAME YYYY-MM-DDTHH:MM</tool> (v3: about 15 tokens)
+  #   json     <tool>{"id":..,"name":..,"args":{..}}</tool> (v1; the code's default when unset)
+  # Evaluation follows it: with compact, calls are constrained while they are
+  # written, invalid ones get an ERROR result, and the booking guard decides
+  # every book_intro_call / record_sms_consent (eval.gen below).
+  call_format: compact
   audio:
     mode: mimi                        # placeholder | zero | mimi
     audio_dir: ../../data/out/audio   # stereo 24 kHz: ch0 Elle, ch1 caller (+ alignment .json)
@@ -59,8 +66,11 @@ prepare:
   # production will use, in its own style ("You work for ... and your name is
   # ... Information: ...", wrapped in <system> tags). {today} becomes the
   # episode's date and time (prepare.prompt_text_for): without it the model
-  # cannot turn "Thursday at 3" into the date a booking needs.
-  prompt_text: "<system> You work for Lewis as his phone assistant and your name is Elle. Information: You answer questions about Lewis and book thirty-minute intro calls with him. Today is {today}. <system>"
+  # cannot turn "Thursday at 3" into the date a booking needs. {caller} says
+  # who is calling: "The caller is Rosa Greenleaf, a returning caller." when
+  # the episode's context.caller_on_file has a name, else "The caller is not
+  # on file." (v3: the model never writes a name or an email itself).
+  prompt_text: "<system> You work for Lewis as his phone assistant and your name is Elle. Information: You answer questions about Lewis and book thirty-minute intro calls with him. Today is {today}. {caller} <system>"
   # native: PersonaPlex's own conversation start (silence on Elle's channel, a
   # sine tone on the caller's, 6 PAD frames before and after the prompt), which
   # the base model was trained with. zero: all audio -1 (the first run).
@@ -118,11 +128,17 @@ eval:
     temperature_audio: 0.8            # audio always samples: greedy Moshi audio degrades (Moshi default 0.8 / top-k 250)
     top_k_audio: 250
     elle_audio: generate              # tiny backend only: generate | teacher (replay recorded codes)
+    # v3 (compact calls only; each defaults to on with call_format compact, off with json):
+    constrain_calls: true             # inside <tool>, only tokens that keep the call valid can be picked
+    error_results: true               # a span that closes as no call is answered with an ERROR result
+    booking_guard: true               # code decides whether a booking / SMS consent executes (NOT BOOKED: ...)
+    guard_latency_s: 0.2              # how soon a guard refusal is ready to inject
     voice_prompt: null                # PersonaPlex voice prompt (e.g. a path to NATF2.pt); set = PersonaPlex runs
                                       # its own system prompt (step_system_prompts). UNVERIFIED
   gates:
     premature_claim_rate: {max: 0.01}
-    write_unsafe_rate: {max: 0.0}
+    write_unsafe_rate: {max: 0.05}      # what the model ATTEMPTED (the guard blocks these; a quality target, not the safety line)
+    executed_unsafe_rate: {max: 0.0}    # what took effect; 0 by construction with the booking guard on
     tool_selection_accuracy: {min: 0.95}
     arg_exact_match: {min: 0.95}
     dead_air_rate: {max: 0.10}

@@ -43,10 +43,10 @@ if HERE not in sys.path:
 import metrics as M  # noqa: E402
 from config_util import load_config, resolve_path  # noqa: E402
 from runtime import decode_text_stream  # noqa: E402
-from textvocab import build_tokenizer  # noqa: E402
+from textvocab import FRAME_RATE, build_tokenizer  # noqa: E402
 
 GATED = ["tool_selection_accuracy", "arg_exact_match", "premature_claim_rate", "write_unsafe_rate",
-         "silent_write_narration_rate", "dead_air_rate"]
+         "executed_unsafe_rate", "silent_write_narration_rate", "dead_air_rate"]
 
 
 def load_jsonl(path: str) -> List[dict]:
@@ -61,7 +61,10 @@ NEG_KIND_FLAG = {"premature_claim": "premature_claim", "write_without_readback":
 
 def _neg_kind(ep_score: dict, eps_by_id: Dict[str, dict]) -> Optional[str]:
     ep = eps_by_id.get(ep_score["id"], {})
-    return ep.get("labels", {}).get("negative_kind")
+    k = ep.get("labels", {}).get("negative_kind")
+    if isinstance(k, str) and k not in NEG_KIND_FLAG and k.startswith(("write_", "book_")):
+        NEG_KIND_FLAG[k] = "unsafe_write"  # v3 names its unsafe writes by what was missing
+    return k
 
 
 def _summarize_group(per: List[dict], eps_by_id: Optional[Dict[str, dict]] = None) -> Dict[str, Any]:
@@ -149,18 +152,29 @@ def reference_report(eps: List[dict], prepared: Optional[List[dict]], tok, gates
                 continue  # windows of long episodes are skipped in the round trip
             P = int(ex["meta"].get("prompt_frames", 0))
             rt.append(M.score_episode(ep, merge_events(ep, decode_text_stream(ex["text"][P:], tok,
-                                                                              ex["meta"]["frame_offset"] + P)),
+                                                                              ex["meta"]["frame_offset"] + P),
+                                                       episode_latencies(ep)),
                                       claim_source="detected"))
         rep["round_trip"] = {"metrics": M.aggregate([p for p in rt if not p["negative"]]), **_summarize_group(rt, by_id)}
     rep["per_episode"] = per
     return rep
 
 
-def merge_events(ep: dict, elle_events: List[dict]) -> List[dict]:
+def merge_events(ep: dict, elle_events: List[dict], latencies: Optional[Dict[str, float]] = None) -> List[dict]:
     """Caller side from the episode (it is replayed), Elle side + results from
-    the decoded stream."""
+    the decoded stream. `latencies` (result id -> seconds the tool took) are
+    written onto the decoded results: a stream shows when a result was injected,
+    not how long the tool took, and the wait metric is defined on the latter."""
     caller = [e for e in ep["events"] if e.get("type") == "speech" and e.get("ch") != "elle"]
+    for e in elle_events:
+        if e.get("type") == "tool_result" and latencies and latencies.get(e.get("id")) is not None:
+            e["latency_s"] = float(latencies[e.get("id")])
     return sorted(caller + elle_events, key=lambda e: e["t"])
+
+
+def episode_latencies(ep: dict) -> Dict[str, float]:
+    return {e.get("id"): float(e["latency_s"]) for e in ep["events"]
+            if e.get("type") == "tool_result" and e.get("latency_s") is not None}
 
 
 # --- model mode -------------------------------------------------------------------
@@ -209,10 +223,17 @@ def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], ga
 
     if generator is None:
         generator, tok, ckpt = make_generator(cfg, base, ckpt)
+    from prepare import call_format_of
+
     ecfg = cfg.get("eval", {})
-    gcfg = ecfg.get("gen", {})
+    # The loop reads the call format from gen (it decides the v3 defaults:
+    # constrained calls, error results, the booking guard).
+    gcfg = dict(ecfg.get("gen", {}))
+    gcfg.setdefault("call_format", call_format_of(cfg))
     by_id = {ep["id"]: ep for ep in eps}
     per, samples, listened, calls = [], [], [], []
+    disagreements: List[dict] = []
+    settings = None
     exs = stitch_windows([ex for ex in prepared if ex["episode_id"] in by_id])[: int(ecfg.get("max_episodes", 100))]
     listen_note = None
     diag = []
@@ -222,9 +243,21 @@ def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], ga
         P = int(ex["meta"].get("prompt_frames", 0))
         # Score what the model said after the system prompt (the prompt is forced, not speech).
         elle = decode_text_stream(out["text"][P:], tok, ex["meta"]["frame_offset"] + P)
-        sc = M.score_episode(ep, merge_events(ep, elle), claim_source="detected")
+        # how long each tool took, as the loop scheduled it (not how long the injection then waited)
+        took = {c["id"]: (c["ready_frame"] - c["end_frame"] - 1) / FRAME_RATE for c in out["calls"]}
+        sc = M.score_episode(ep, merge_events(ep, elle, took), claim_source="detected")
         per.append(sc)
         calls += [dict(c, episode=ep["id"]) for c in out["calls"]]
+        settings = out.get("settings", settings)
+        if (out.get("settings") or {}).get("booking_guard"):
+            # The metric judges the decoded events with the same guard logic the
+            # loop used live; a difference would mean one of them is wrong.
+            live = {c["id"]: c["guard"] for c in out["calls"]}
+            for w in sc["writes"]:
+                if w["id"] in live and not any(p.startswith("missing:") for p in w["problems"]) \
+                        and (w["problems"] or [None])[0] != live[w["id"]]:
+                    disagreements.append({"episode": ep["id"], "call": w["id"], "loop": live[w["id"]],
+                                          "metric": w["problems"]})
         d = episode_diagnostics(ex, out, tok)
         diag.append(dict(d, id=ep["id"]))
         if len(samples) < 5:
@@ -249,13 +282,36 @@ def model_report(cfg: dict, base: str, eps: List[dict], prepared: List[dict], ga
                          "mean_wait_frames_after_ready": (sum(waits) / len(waits)) if waits else None,
                          "max_wait_frames_after_ready": max(waits) if waits else None},
            "attempts": summarize_diagnostics(diag), "per_episode_diagnostics": diag,
-           "decoding": {k: gcfg.get(k) for k in ("temperature_text", "top_k_text", "seed_offset", "elle_audio")},
+           "guard": guard_summary(calls, settings, disagreements),
+           "decoding": dict({k: gcfg.get(k) for k in ("temperature_text", "top_k_text", "seed_offset", "elle_audio")},
+                            **(settings or {})),
            "listen": {"files": listened, "note": listen_note}, "samples": samples, "per_episode": per}
     fpath = os.path.join(resolve_path(cfg["run_dir"], base), "plain_forgetting.json")
     if os.path.exists(fpath):
         with open(fpath) as f:
             rep["plain_forgetting"] = json.load(f)
     return rep
+
+
+def guard_summary(calls: List[dict], settings: Optional[dict], disagreements: List[dict]) -> Dict[str, Any]:
+    """What the booking guard did over all evaluated episodes (positives and
+    negatives): how many writes the model attempted, how many the guard refused
+    and why, and how many were executed. `executed_unsafe` counts executed
+    writes the guard would have refused: 0 by construction when it is on."""
+    writes = [c for c in calls if M.is_guarded(c)]
+    books = [c for c in writes if c["name"] == "book_intro_call"]
+    sms = [c for c in writes if c["name"] == "record_sms_consent"]
+    refused = [c for c in writes if c.get("guard")]
+    return {
+        "enabled": bool((settings or {}).get("booking_guard")),
+        "bookings_attempted": len(books), "bookings_blocked": sum(1 for c in books if c.get("guard")),
+        "bookings_executed": sum(1 for c in books if c.get("executed")),
+        "sms_consents_attempted": len(sms), "sms_consents_blocked": sum(1 for c in sms if c.get("guard")),
+        "sms_consents_executed": sum(1 for c in sms if c.get("executed")),
+        "guard_refusals": M._count(c["guard"] for c in refused),
+        "executed_unsafe": sum(1 for c in writes if c.get("executed") and c.get("guard")),
+        "metric_disagreements": disagreements[:20], "n_metric_disagreements": len(disagreements),
+    }
 
 
 def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str, Any]:
@@ -287,6 +343,8 @@ def episode_diagnostics(ex: dict, out: dict, tok, window: int = 10) -> Dict[str,
     return {"reference_calls": len(ref_calls), "tool_opens": out.get("tool_opens", 0),
             "calls": len(out.get("calls", [])), "tool_errors": len(out.get("tool_errors", [])),
             "stray_closes": out.get("stray_closes", 0),
+            "error_results": sum(1 for e in out.get("tool_errors", []) if e.get("result_id")),
+            "constrained_frames": out.get("constrained_frames", 0),
             "error_samples": [{"error": e.get("error"), "text": (e.get("text") or "")[:200]}
                               for e in out.get("tool_errors", [])[:3]],
             "max_p_tool": max(free) if free else None, "near_reference_calls": near,
@@ -303,6 +361,8 @@ def summarize_diagnostics(diag: List[dict]) -> Dict[str, Any]:
         "tool_opens": sum(d["tool_opens"] for d in diag),
         "calls_parsed": sum(d["calls"] for d in diag),
         "tool_errors": sum(d["tool_errors"] for d in diag),
+        "error_results": sum(d.get("error_results", 0) for d in diag),
+        "constrained_frames": sum(d.get("constrained_frames", 0) for d in diag),
         "stray_closes": sum(d.get("stray_closes", 0) for d in diag),
         "emitted_near_reference_call": sum(1 for n in near if n["emitted"]),
         "near_reference_p_tool_mean": (sum(ps) / len(ps)) if ps else None,
@@ -362,7 +422,8 @@ def markdown(rep: Dict[str, Any]) -> str:
         if at:
             lines += [f"- decoding: {rep.get('decoding')}",
                       f"- call attempts: reference calls {at['reference_calls']}, <tool> emitted {at['tool_opens']},"
-                      f" parsed calls {at['calls_parsed']}, failed/unclosed calls {at['tool_errors']},"
+                      f" parsed calls {at['calls_parsed']}, failed/unclosed calls {at['tool_errors']}"
+                      f" (answered with an ERROR result: {at.get('error_results', 0)}),"
                       f" stray </tool> {at['stray_closes']},"
                       f" emitted within 10 frames of a reference call {at['emitted_near_reference_call']}",
                       f"- p(<tool>) near reference calls: mean {_fmt(at['near_reference_p_tool_mean'])},"
@@ -372,6 +433,16 @@ def markdown(rep: Dict[str, Any]) -> str:
                       f" {at['median_frames_to_first_divergence']}",
                       f"- frames with NaN/inf probabilities: {at.get('nonfinite_frames')} of {at.get('frames')}"
                       + ("  <-- NUMBERS UNRELIABLE (GPU or numerics fault)" if at.get("nonfinite_frames") else "")]
+        gd = rep.get("guard")
+        if gd and gd.get("enabled"):
+            lines += [f"- booking guard: bookings attempted {gd['bookings_attempted']}, blocked {gd['bookings_blocked']},"
+                      f" executed {gd['bookings_executed']}; SMS consents attempted {gd['sms_consents_attempted']},"
+                      f" blocked {gd['sms_consents_blocked']}, executed {gd['sms_consents_executed']}",
+                      f"- guard refusals by reason: {gd['guard_refusals'] or 'none'}",
+                      "- write_unsafe_rate is what the model ATTEMPTED; executed_unsafe_rate is what took effect"
+                      f" (guard and metric disagreed on {gd['n_metric_disagreements']} writes)"]
+        elif gd:
+            lines.append("- booking guard: off (gen.call_format json / gen.booking_guard false)")
         pf = rep.get("plain_forgetting")
         if pf:
             g = pf.get("gate") or {}
@@ -408,6 +479,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--seed-offset", type=int, help="model mode: added to each episode's seed")
     ap.add_argument("--elle-audio", choices=["generate", "teacher"],
                     help="model mode: teacher = force Elle's recorded audio (diagnostic: separates text from audio drift)")
+    ap.add_argument("--constrain-calls", choices=["on", "off"],
+                    help="model mode, compact calls: off = let the model write a call freely (shows how often "
+                         "it would get one wrong); default follows eval.gen.constrain_calls")
     ap.add_argument("--tag", help="model mode: write into <out>/<tag>/ (several decoding settings side by side)")
     args = ap.parse_args(argv)
     cfg, base = load_config(args.config)
@@ -415,6 +489,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg.setdefault("eval", {})["max_episodes"] = args.max_episodes
     gen_over = {"temperature_text": args.temperature_text, "top_k_text": args.top_k_text,
                 "seed_offset": args.seed_offset, "elle_audio": args.elle_audio}
+    if args.constrain_calls:
+        gen_over["constrain_calls"] = args.constrain_calls == "on"
     cfg.setdefault("eval", {}).setdefault("gen", {}).update({k: v for k, v in gen_over.items() if v is not None})
     prepared_dir = resolve_path(cfg["data"]["prepared_dir"], base)
     eps_path = args.episodes or os.path.join(prepared_dir, "episodes.jsonl")

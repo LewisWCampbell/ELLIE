@@ -165,6 +165,44 @@ class MiniPersonaPlex(unittest.TestCase):
     def test_streaming_generator_matches_training_forward(self):
         self._parity(prompt=None)
 
+    def test_generator_honours_allowed_ids(self):
+        """Constrained calls (gen.constrain_calls): with `allowed`, the real
+        generator can only emit one of those ids, greedy or sampled, and builds
+        one mask per allowed set. Without it, nothing changes."""
+        import numpy as np
+
+        import moshi_backend as mb
+        from param_lora import merge_param_lora
+
+        adapter, _tok, new_ids, _g = mb.load_real_model(self.cfg, device="cpu")
+        lm = adapter.lm
+        merge_param_lora(lm)
+        lm.eval()
+
+        class FakeMimi:
+            sample_rate, frame_rate = 24000, 12.5
+
+            def encode(self, x):
+                return torch.zeros(1, 8, max(1, x.shape[-1] // 1920), dtype=torch.long)
+
+        T = 16
+        ex = {"text": np.full(T, 3), "audio": np.full((16, T), 5), "meta": {"prompt_frames": 0}}
+        caller = np.full(8, 5)
+        sets = [(11, 500, new_ids[1]), (31999,), (7, 8, 9, 10)]
+        for temp in (0.0, 0.9):
+            gen = mb.MoshiFrameGenerator(lm, FakeMimi(), None, {"temperature_text": temp}, device="cpu")
+            gen.frame_stats = []
+            gen.start(ex, {"seed": 1}, {})
+            try:
+                free = gen.step(0, caller, None, [])
+                for f in range(1, T - 1):
+                    allowed = sets[f % len(sets)]
+                    self.assertIn(gen.step(f, caller, None, [free], allowed=allowed), allowed, (temp, f))
+                self.assertEqual(gen.step(T - 1, caller, 42, [], allowed=sets[0]), 42)  # forcing still wins
+            finally:
+                gen.finish()
+            self.assertEqual(len(gen._masks), len(sets))
+
     def _parity(self, prompt):
         """The live generator must see exactly what training saw. Drive the real
         MoshiFrameGenerator frame by frame with an example's own text and audio

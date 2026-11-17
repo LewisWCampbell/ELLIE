@@ -181,10 +181,10 @@ class RuntimeTest(unittest.TestCase):
 
 
 class ReferenceModeTest(unittest.TestCase):
-    def run_reference(self, eps):
-        tok = ChunkTokenizer.build([s["text"] for e in eps for s in contract_segments(e)])
-        cfg = {"prepare": {"max_frames": 4000, "audio": {"mode": "zero"}}}
-        rt = [retime_episode(e, tok) for e in eps]
+    def run_reference(self, eps, fmt="json"):
+        tok = ChunkTokenizer.build([s["text"] for e in eps for s in contract_segments(e, fmt)])
+        cfg = {"prepare": {"max_frames": 4000, "audio": {"mode": "zero"}, "call_format": fmt}}
+        rt = [retime_episode(e, tok, call_format=fmt) for e in eps]
         prepared = []
         for e in rt:
             prepared += prepare_episode(e, cfg, tok)
@@ -212,7 +212,10 @@ class ReferenceModeTest(unittest.TestCase):
         for sp_ in ("val", "test"):
             with open(os.path.join(SAMPLE_DIR, f"sample_{sp_}.jsonl")) as f:
                 eps += [json.loads(l) for l in f]
-        rep = self.run_reference(eps)
+        # A v3 sample (it calls get_caller_details) is trained and evaluated with
+        # compact calls; a v1 sample with JSON calls, as before.
+        v3 = any(c.get("name") == "get_caller_details" for e in eps for c in M.calls(e["events"]))
+        rep = self.run_reference(eps, "compact" if v3 else "json")
         self.assert_perfect(rep, "ground_truth")
         self.assert_perfect(rep, "round_trip")
         nk = rep["ground_truth"]["negatives_by_kind"]

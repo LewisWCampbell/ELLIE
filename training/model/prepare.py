@@ -87,8 +87,16 @@ def load_alignment(json_path: str) -> Optional[dict]:
 
 # --- retiming: make the episode physically possible on a 12.5 Hz text stream -----
 
+def call_format_of(cfg: dict) -> str:
+    """prepare.call_format: "json" (v1 calls, the default) or "compact" (v3)."""
+    fmt = (cfg.get("prepare") or {}).get("call_format") or "json"
+    if fmt not in ("json", "compact"):
+        raise ValueError(f"prepare.call_format must be json or compact, not {fmt!r}")
+    return fmt
+
+
 def retime_episode(ep: dict, tok: TextTokenizer, margin_frames: int = 1,
-                   call_after_utterance_window_s: float = 0.6) -> dict:
+                   call_after_utterance_window_s: float = 0.6, call_format: str = "json") -> dict:
     """The contract's events treat <tool> and <result> spans as instantaneous,
     but on Moshi's text stream every token takes one 80 ms frame: a ~45-token
     call takes ~3.6 s to emit and a ~35-token result ~2.8 s to inject. Without
@@ -133,7 +141,7 @@ def retime_episode(ep: dict, tok: TextTokenizer, margin_frames: int = 1,
                     for w, ws, _ in spread_words(u["text"], ut, float(u.get("dur") or 0.0)):
                         if ws > t:
                             pending += len(tok.encode_word(w, first=False))
-            n = len(tok.encode(tool_call_text(e))) + margin_frames
+            n = len(tok.encode(tool_call_text(e, call_format))) + margin_frames
             call_end[e.get("id")] = t + (pending + n) / FRAME_RATE
         elif e.get("type") == "tool_result":
             lat = float(e.get("latency_s") or 0.0)
@@ -388,10 +396,22 @@ NATIVE_AGENT_SILENCE = [948, 243, 1178, 546, 1736, 1030, 1978, 2008]
 NATIVE_USER_SINE = [430, 1268, 381, 1611, 1095, 1495, 56, 472]
 
 
+def caller_sentence(ep: dict) -> str:
+    """Who is calling, for the prompt's `{caller}`: a returning caller is on
+    file with a name (context.caller_on_file), anyone else is not."""
+    on_file = (ep.get("context") or {}).get("caller_on_file")
+    name = str(on_file.get("name") or "").strip() if isinstance(on_file, dict) else ""
+    return f"The caller is {name}, a returning caller." if name else "The caller is not on file."
+
+
 def prompt_text_for(ep: dict, template: str) -> str:
     """The system prompt for one episode. `{today}` becomes the episode's own
     date and time (ep["now"]), so the model can turn "Thursday at 3" into a
-    date: without it, every date argument is a guess."""
+    date: without it, every date argument is a guess. `{caller}` says whether
+    the caller is on file (v3: the model never asks a returning caller who
+    they are, and never writes a name itself)."""
+    if "{caller}" in template:
+        template = template.replace("{caller}", caller_sentence(ep))
     if "{today}" not in template:
         return template
     from datetime import datetime
@@ -435,14 +455,16 @@ def prepare_episode(ep: dict, cfg: dict, tok: TextTokenizer, base_dir: str = "."
     acfg = pcfg.get("audio", {"mode": "placeholder"})
     max_frames = int(pcfg.get("max_frames", 1250))
     tail = float(pcfg.get("tail_sec", 1.0))
+    fmt = call_format_of(cfg)
 
     if pcfg.get("retime", True) and not ep.get("meta", {}).get("retimed"):
         if acfg.get("mode") == "mimi" and not acfg.get("audio_is_retimed", False):
             raise ValueError("mimi audio must be rendered from retimed episodes (prepare.py --write-retimed); "
                              "set prepare.audio.audio_is_retimed: true once it is, or prepare.retime: false")
-        ep = retime_episode(ep, tok, call_after_utterance_window_s=float(pcfg.get("call_after_utterance_window_s", 0.6)))
+        ep = retime_episode(ep, tok, call_after_utterance_window_s=float(pcfg.get("call_after_utterance_window_s", 0.6)),
+                            call_format=fmt)
     T = int(math.ceil((episode_duration(ep) + tail) * FRAME_RATE))
-    segments, source = episode_segments(ep, prefer_dataset=pcfg.get("prefer_dataset_serializer", True))
+    segments, source = episode_segments(ep, prefer_dataset=pcfg.get("prefer_dataset_serializer", True), fmt=fmt)
     alignment, wav_path = None, None
     if acfg.get("mode") == "mimi":
         audio_dir = resolve_path(acfg["audio_dir"], base_dir)
@@ -496,7 +518,7 @@ def prepare_episode(ep: dict, cfg: dict, tok: TextTokenizer, base_dir: str = "."
             "neg_mask": np.concatenate([zeros, placed["neg_mask"][a:b]]),
             "audio": np.concatenate([pre_audio, audio[:, a:b]], axis=1).astype(np.int32),
             "audio_mask": np.concatenate([zeros, audio_mask[a:b]]),
-            "meta": {"frame_offset": a - P, "prompt_frames": P, "serializer": source, "audio_mode": mode, "spans": spans,
+            "meta": {"frame_offset": a - P, "prompt_frames": P, "serializer": source, "call_format": fmt, "audio_mode": mode, "spans": spans,
                      "dropped_tokens": placed["dropped_tokens"],
                      "max_word_delay_frames": placed["max_word_delay_frames"],
                      "max_span_delay_frames": placed["max_span_delay_frames"],
@@ -514,7 +536,7 @@ def get_tokenizer(cfg: dict, base: str, eps: List[dict], rebuild: bool = False) 
         path = resolve_path(tcfg["vocab"], base)
         if rebuild or not os.path.exists(path):
             texts = [s["text"] for ep in eps if ep.get("split", "train") == "train"
-                     for s in episode_segments(ep)[0]]
+                     for s in episode_segments(ep, fmt=call_format_of(cfg))[0]]
             ChunkTokenizer.build(texts, int(tcfg.get("max_pieces", 4000))).save(path)
     return build_tokenizer(tcfg, base)
 
@@ -582,7 +604,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     pcfg = cfg.get("prepare", {})
     if pcfg.get("retime", True):
         eps = [ep if ep.get("meta", {}).get("retimed") else
-               retime_episode(ep, tok, call_after_utterance_window_s=float(pcfg.get("call_after_utterance_window_s", 0.6)))
+               retime_episode(ep, tok, call_after_utterance_window_s=float(pcfg.get("call_after_utterance_window_s", 0.6)),
+                              call_format=call_format_of(cfg))
                for ep in eps]
     os.makedirs(out_dir, exist_ok=True)
     # The episodes as trained on (retimed); evaluate.py scores against these and
@@ -600,7 +623,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     counts = save_examples(examples, out_dir)
     frames = sum(len(e["text"]) for e in examples)
     summary = {"episodes": len(eps), "examples": counts, "frames": frames, "hours": frames / FRAME_RATE / 3600,
-               "serializer_sources": sources,
+               "serializer_sources": sources, "call_format": call_format_of(cfg),
                "max_span_delay_frames": max((e["meta"]["max_span_delay_frames"] for e in examples), default=0),
                "max_word_delay_frames": max((e["meta"]["max_word_delay_frames"] for e in examples), default=0),
                "dropped_tokens": sum(e["meta"]["dropped_tokens"] for e in examples), "out": out_dir}

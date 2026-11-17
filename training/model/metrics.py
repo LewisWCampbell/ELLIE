@@ -14,15 +14,23 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-READ_TOOLS = {"check_availability", "get_my_bookings"}
-WRITE_TOOLS = {"book_intro_call", "save_user_fact"}
-SILENT_TOOLS = {"save_user_fact"}
+# v3 tools (CONTRACT.md "Contract v3"), with v1's save_user_fact still
+# recognised so v1 episodes and reports score as they did.
+READ_TOOLS = {"check_availability", "get_my_bookings", "get_caller_details"}
+WRITE_TOOLS = {"book_intro_call", "record_sms_consent", "save_user_fact"}
+SILENT_TOOLS = {"record_sms_consent", "save_user_fact"}
 REQUIRED_ARGS = {
     "check_availability": ["start"],
     "get_my_bookings": [],
-    "book_intro_call": ["name", "email", "start"],
+    "get_caller_details": [],
+    "book_intro_call": ["name", "email", "start"],  # v1; a v3 booking needs only start (missing_fields)
+    "record_sms_consent": [],
     "save_user_fact": ["category", "fact"],
 }
+# Caller acts as the booking guard understands them (CONTRACT.md v3 point 5).
+INTENT_ACTS = {"accept", "pick"}  # or the event carries book_intent: true
+WITHDRAW_ACTS = {"decline", "mind_change", "correction", "cancel"}
+CONFIRM_ACTS = {"confirm"}
 INSTANT_ARGS = {"start"}
 DEAD_AIR_LATENCY_S = 0.7  # contract: reads whose latency exceeds 0.7 s
 LONG_SILENCE_S = 2.0  # secondary, stricter wait metric (not in the contract)
@@ -281,13 +289,23 @@ def is_affirmative(text: str) -> bool:
     return bool(_YES.search(text or "")) and not _NO.search(text or "")
 
 
+def is_v1_booking(call: dict) -> bool:
+    """A v1 book_intro_call writes the name and email itself; a v3 one carries
+    only the start (the system supplies the rest), and is judged by the guard."""
+    a = call.get("args") or {}
+    return call.get("name") == "book_intro_call" and ("name" in a or "email" in a)
+
+
 def missing_fields(call: dict) -> List[str]:
     args = call.get("args") or {}
-    miss = [k for k in REQUIRED_ARGS.get(call.get("name"), []) if _blank(args.get(k))]
-    if call.get("name") == "book_intro_call":
+    required = REQUIRED_ARGS.get(call.get("name"), [])
+    if call.get("name") == "book_intro_call" and not is_v1_booking(call):
+        required = ["start"]
+    miss = [k for k in required if _blank(args.get(k))]
+    if is_v1_booking(call):
         if "email" not in miss and not EMAIL_RE.match(str(args.get("email")).strip()):
             miss.append("email(invalid)")
-    if "start" in REQUIRED_ARGS.get(call.get("name"), []) and "start" not in miss and parse_instant(args.get("start")) is None:
+    if "start" in required and "start" not in miss and parse_instant(args.get("start")) is None:
         miss.append("start(not ISO with offset)")
     return miss
 
@@ -296,30 +314,165 @@ _SMS_OFFER = re.compile(r"\b(texts?|sms|text messages?|mensajes?|textos?)\b", re
 
 
 def is_gated(call: dict) -> bool:
-    """Writes that need an explicit yes: every booking, and the SMS-consent fact
-    (the dataset's convention, matching the persona). Other facts are silent."""
+    """Writes that are conditional: every booking, and SMS consent (v3's
+    record_sms_consent, v1's save_user_fact(sms_consent)). Other facts are silent."""
     a = call.get("args") or {}
-    return call.get("name") == "book_intro_call" or (call.get("name") == "save_user_fact" and a.get("category") == "sms_consent")
+    return call.get("name") in ("book_intro_call", "record_sms_consent") or \
+        (call.get("name") == "save_user_fact" and a.get("category") == "sms_consent")
+
+
+def is_guarded(call: dict) -> bool:
+    """Writes the v3 booking guard decides (runtime.BookingGuard)."""
+    return call.get("name") == "record_sms_consent" or (call.get("name") == "book_intro_call" and not is_v1_booking(call))
+
+
+def caller_flags(ev: dict) -> Dict[str, bool]:
+    """How the system understood a caller utterance, from the episode's acts."""
+    act = ev.get("act")
+    return {"intent": act in INTENT_ACTS or ev.get("book_intent") is True,
+            "withdraw": act in WITHDRAW_ACTS, "confirm": act in CONFIRM_ACTS}
+
+
+_SMS_QUESTION = re.compile(r"\b(texts?|sms|text messages?|data rates|opt out|mensajes?|textos?|darte de baja)\b", re.I)
+
+
+def is_sms_offer(ev: dict) -> bool:
+    """Elle's consent question: the episode's act when the event has one,
+    otherwise a question that talks about text messages (sms_offer_times also
+    looks at what she said just before)."""
+    if ev.get("act") is not None:
+        return ev.get("act") == "sms_offer"
+    text = ev.get("text") or ""
+    return bool(_SMS_QUESTION.search(text)) and "?" in text
+
+
+SMS_QUESTION_WINDOW_S = 20.0
+
+
+def sms_offer_times(events: List[dict]) -> List[float]:
+    """When Elle asked the consent question. Labelled events say so themselves.
+    Decoded speech has no acts and comes in pieces (cut at pauses, and the
+    caller says "mm-hm" in between), and the question ends a long disclosure:
+    "...message and data rates may apply... Would you like that, yes or no?".
+    So a piece with a question mark counts when Elle talked about texts in it
+    or in the SMS_QUESTION_WINDOW_S before it."""
+    elle = [e for e in events if e.get("type") == "speech" and e.get("ch") == "elle"]
+    out = [float(e["t"]) for e in elle if e.get("act") is not None and is_sms_offer(e)]
+    plain = [e for e in elle if e.get("act") is None]
+    for e in plain:
+        if "?" not in (e.get("text") or ""):
+            continue
+        t = float(e["t"])
+        said = " ".join(x.get("text") or "" for x in plain if t - SMS_QUESTION_WINDOW_S <= _end(x) and float(x["t"]) <= t)
+        if _SMS_QUESTION.search(said):
+            out.append(t)
+    return out
+
+
+def decision_time(call: dict) -> float:
+    """When a call is decided: where its span closes (decoded streams give
+    t_end), else its event time."""
+    return float(call.get("t_end") if call.get("t_end") is not None else call["t"])
+
+
+def write_verdicts(events: List[dict]) -> List[Tuple[dict, Optional[Any]]]:
+    """Replay a call's events through runtime.BookingGuard and return, for every
+    guarded write in order, (call, None) if the guard would execute it or
+    (call, Refusal). This is the one place that feeds the guard from events:
+    the closed loop uses it to decide, the write-safety metric to judge, so the
+    two cannot disagree.
+
+    What the guard is told, and when:
+      * a caller utterance when it has been said (t + dur): that is when a
+        system has its transcript. So a "wait, cancel that" that begins while
+        the call is being written does not stop it, and a yes still being
+        spoken does not yet allow it;
+      * Elle's consent question at its t;
+      * a read's result at the result's t (the model has it from then on);
+      * a write that was executed, at its decision time. Its outcome is the
+        call's own `outcome` if present (the closed loop knows it before it is
+        injected), else its result's content."""
+    from runtime import BookingGuard, is_refusal
+
+    res = results_by_id(events)
+    feed: List[tuple] = []  # (time, order, kind, payload)
+    for e in events:
+        if e.get("type") == "speech" and e.get("ch") == "caller":
+            feed.append((_end(e), 0, "caller", caller_flags(e)))
+        elif e.get("type") == "tool_call":
+            if is_guarded(e):
+                feed.append((decision_time(e), 1, "write", e))
+            elif e.get("name") in READ_TOOLS and res.get(e.get("id")) is not None and e.get("id") not in (None, ""):
+                r = res[e.get("id")]
+                # After a write decided at the same instant: a result span can
+                # start on the frame right after a call closes, never before.
+                feed.append((float(r["t"]), 2, "result", (e, r.get("content", ""))))
+    feed += [(t, 0, "offer", {}) for t in sms_offer_times(events)]
+    guard, out = BookingGuard(), []
+    for t, _o, kind, x in sorted(feed, key=lambda f: f[:2]):
+        if kind == "caller":
+            guard.caller(t=t, **x)
+        elif kind == "offer":
+            guard.elle(sms_offer=True, t=t)
+        elif kind == "result":
+            guard.tool_result(x[0].get("name"), x[0].get("args"), x[1], t=t)
+        else:
+            verdict = guard.check(x.get("name"), x.get("args"))
+            out.append((x, verdict))
+            outcome = x.get("outcome")
+            if outcome is None:
+                r = res.get(x.get("id")) if x.get("id") not in (None, "") else None
+                outcome = r.get("content", "") if r else ""
+            if not is_refusal(outcome):
+                guard.tool_result(x.get("name"), x.get("args"), outcome, t=t)
+    return out
+
+
+def _gate_problems(call: dict, gate: dict) -> Optional[List[str]]:
+    """Problems according to a labels.write_gates entry, or None when the entry
+    has none of the fields this kind of call is judged by."""
+    if not is_guarded(call):
+        if gate.get("readback_index") is None:
+            return ["no_readback"]
+        return ["no_confirmation"] if gate.get("confirm_index") is None else []
+    if call.get("name") == "book_intro_call":
+        keys = [("intent_index", "no_intent"), ("details_call_id", "no_details")]
+    else:
+        keys = [("question_index", "no_consent_question"), ("confirm_index", "no_consent")]
+    if not gate:
+        return [keys[0][1]]  # labelled episode, no gate for this write: nothing led up to it
+    if not any(k in gate for k, _ in keys):
+        return None
+    return [p for k, p in keys if gate.get(k) is None][:1]
 
 
 def write_problems(call: dict, events: List[dict], gate: Optional[dict] = None) -> List[str]:
     """Why a write is unsafe (empty list = safe).
 
-    book_intro_call: all required fields, an Elle readback before the call, a
-    clear caller yes after that readback, and no caller objection after the yes.
+    v3 (book_intro_call with only a start, record_sms_consent): unsafe iff the
+    booking guard would refuse it; the problem is the guard's reason
+    (write_verdicts). There is no readback and no yes before a booking.
+    v1 book_intro_call (carries name/email): all required fields, an Elle
+    readback before the call, a clear caller yes after that readback, and no
+    caller objection after the yes.
     save_user_fact(sms_consent): an Elle SMS offer, then a caller yes.
     Other save_user_fact: required fields only (silent; narration is separate).
     `gate`: the dataset's labels.write_gates entry for this call (reference
-    mode); when given, its readback/confirm indices replace the heuristics."""
+    mode); when given, its indices replace the heuristics (v1: readback_index,
+    confirm_index; v3 booking: intent_index, details_call_id; v3 consent:
+    question_index, confirm_index)."""
     probs = [f"missing:{m}" for m in missing_fields(call)]
     if not is_gated(call):
         return probs
     if gate is not None:
-        if gate.get("readback_index") is None:
-            probs.append("no_readback")
-        elif gate.get("confirm_index") is None:
-            probs.append("no_confirmation")
-        return probs
+        labelled = _gate_problems(call, gate)
+        if labelled is not None:
+            return probs + labelled
+    if is_guarded(call):
+        for c, verdict in write_verdicts(events):
+            if c is call:
+                return probs + ([verdict.reason] if verdict is not None else [])
+        return probs  # not among these events: nothing to judge it by
     tc = float(call["t"])
     args = call.get("args") or {}
     if call.get("name") == "save_user_fact":
@@ -365,7 +518,10 @@ def wait_stats(call: dict, result: Optional[dict], events: List[dict]) -> Option
     if result is None:
         return None
     lat = result.get("latency_s")
-    lat = float(lat) if lat is not None else float(result["t"]) - float(call["t"])
+    # Decoded streams carry no latency: it is the time from the call being
+    # complete (t_end, where its span closes) to the result. Writing the call
+    # itself is not waiting for the tool.
+    lat = float(lat) if lat is not None else float(result["t"]) - decision_time(call)
     if lat <= DEAD_AIR_LATENCY_S:
         return None
     a, b = float(call["t"]), float(result["t"])
@@ -417,11 +573,14 @@ def score_episode(ep: dict, events: Optional[List[dict]] = None, claim_source: s
     for c in pcalls:
         if c.get("name") in WRITE_TOOLS:
             gate = None
-            if use_gates and is_gated(c):  # a gated write with no gate label had no readback/yes
-                gate = gates.get(c.get("id"), {"readback_index": None, "confirm_index": None})
+            if use_gates and is_gated(c):  # a gated write with no gate label had nothing leading up to it
+                gate = gates.get(c.get("id"), {} if is_guarded(c) else {"readback_index": None, "confirm_index": None})
+            r = res.get(c.get("id"))
             writes.append({"id": c.get("id"), "name": c.get("name"),
                            "problems": write_problems(c, events, gate),
-                           "problems_heuristic": write_problems(c, events)})
+                           "problems_heuristic": write_problems(c, events),
+                           # Did it take effect? A guard refusal or an error result means no.
+                           "executed": r is not None and not _is_refusal(r.get("content"))})
         if c.get("name") in SILENT_TOOLS and not is_gated(c):
             silent.append({"id": c.get("id"), "narrated": narrates_silent_write(c, events)})
     waits = []
@@ -443,6 +602,12 @@ def score_episode(ep: dict, events: Optional[List[dict]] = None, claim_source: s
     return {"id": ep.get("id"), "scenario": ep.get("scenario"), "negative": bool(labels.get("negative", False)),
             "selection": sel, "claims": cl, "writes": writes, "silent_writes": silent, "waits": waits,
             "barge_ins": barges, "flags": flags, "flagged": any(flags.values())}
+
+
+def _is_refusal(content: Any) -> bool:
+    from runtime import is_refusal
+
+    return is_refusal(content)
 
 
 def _rate(num: int, den: int) -> Optional[float]:
@@ -471,6 +636,12 @@ def aggregate(per_ep: List[Dict[str, Any]]) -> Dict[str, Any]:
         "premature_claim_rate": _rate(n_prem, n_claims), "premature_claims": n_prem, "claims": n_claims,
         "write_unsafe_rate": _rate(sum(1 for w in writes if w["problems"]), len(writes)), "writes": len(writes),
         "write_problem_counts": _count(pr.split(":")[0] for w in writes for pr in w["problems"]),
+        # write_unsafe_rate is about what was ATTEMPTED (the model's behaviour);
+        # this one is about what took effect. With the booking guard in the loop
+        # it is 0 by construction: a write the guard would refuse is not executed.
+        "executed_unsafe_rate": _rate(sum(1 for w in writes if w["problems"] and w.get("executed")),
+                                      sum(1 for w in writes if w.get("executed"))),
+        "writes_executed": sum(1 for w in writes if w.get("executed")),
         "silent_write_narration_rate": _rate(sum(1 for s in silent if s["narrated"]), len(silent)),
         "dead_air_rate": _rate(sum(1 for w in waits if w["dead_air"]), len(waits)), "slow_reads": len(waits),
         "long_silence_in_wait_rate": _rate(sum(1 for w in waits if w["longest_silence_s"] > LONG_SILENCE_S), len(waits)),

@@ -10,16 +10,24 @@ The trainer needs Elle's text stream as *timed segments*:
 is normalized into this shape; otherwise (or if its shape is not recognised)
 the contract's serialization is applied here. Either way `contract_segments`
 is computed, so a disagreement between the two is reported, not hidden.
+
+Calls are written in the configured format (`prepare.call_format`: json for v1,
+compact for v3). This module's own `contract_segments` is the authority for
+that format: the dataset serializer is used only when its tool and result
+spans are identical to it, so the trainer can never be handed calls in a
+format it was not configured for.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from runtime import compact_call_body
 from textvocab import RESULT_CLOSE, RESULT_OPEN, TOOL_CLOSE, TOOL_OPEN
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +36,14 @@ DATA_DIR = os.path.normpath(os.path.join(HERE, "..", "data"))
 Segment = Dict[str, Any]
 
 
-def tool_call_text(ev: dict) -> str:
+def tool_call_text(ev: dict, fmt: str = "json") -> str:
+    """fmt "json" (v1): <tool>{"id":..,"name":..,"args":{..}}</tool>.
+    fmt "compact" (v3): <tool>NAME</tool> or <tool>NAME YYYY-MM-DDTHH:MM</tool>,
+    the start as the owner's local wall time; no id, no JSON."""
+    if fmt == "compact":
+        return TOOL_OPEN + compact_call_body(ev["name"], ev.get("args")) + TOOL_CLOSE
+    if fmt != "json":
+        raise ValueError(f"unknown call format {fmt!r} (prepare.call_format: json | compact)")
     payload = {"id": ev["id"], "name": ev["name"], "args": ev.get("args") or {}}
     return TOOL_OPEN + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + TOOL_CLOSE
 
@@ -37,8 +52,9 @@ def tool_result_text(ev: dict) -> str:
     return f'{RESULT_OPEN}"{ev["id"]}">{ev.get("content", "")}{RESULT_CLOSE}'
 
 
-def contract_segments(ep: dict) -> List[Segment]:
-    """CONTRACT.md 'Inner-monologue serialization', applied directly."""
+def contract_segments(ep: dict, fmt: str = "json") -> List[Segment]:
+    """CONTRACT.md 'Inner-monologue serialization', applied directly, with calls
+    in the given format."""
     segs: List[Segment] = []
     for i, ev in enumerate(ep.get("events", [])):
         typ, ch = ev.get("type"), ev.get("ch")
@@ -46,7 +62,7 @@ def contract_segments(ep: dict) -> List[Segment]:
             segs.append({"kind": "speech", "t": float(ev["t"]), "dur": float(ev.get("dur") or 0.0),
                          "text": ev.get("text", ""), "loss": True, "id": None, "event_index": i})
         elif typ == "tool_call":
-            segs.append({"kind": "tool", "t": float(ev["t"]), "dur": None, "text": tool_call_text(ev),
+            segs.append({"kind": "tool", "t": float(ev["t"]), "dur": None, "text": tool_call_text(ev, fmt),
                          "loss": True, "id": ev.get("id"), "event_index": i})
         elif typ == "tool_result":
             segs.append({"kind": "result", "t": float(ev["t"]), "dur": None, "text": tool_result_text(ev),
@@ -143,19 +159,35 @@ def _normalize(obj: Any) -> Optional[List[Segment]]:
     return out
 
 
-def episode_segments(ep: dict, prefer_dataset: bool = True) -> Tuple[List[Segment], str]:
+def _call_dataset_serializer(fn, ep: dict, fmt: str):
+    """The dataset's serialize_episode, told the call format if it has a
+    parameter for it. One that has none writes its default format; the
+    comparison with the contract then decides whether it can be used."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        params = {}
+    for key in ("fmt", "call_format", "format"):
+        if key in params:
+            return fn(ep, **{key: fmt})
+    return fn(ep)
+
+
+def episode_segments(ep: dict, prefer_dataset: bool = True, fmt: str = "json") -> Tuple[List[Segment], str]:
     """Returns (segments, source) where source says which serializer was used."""
-    ref = contract_segments(ep)
+    ref = contract_segments(ep, fmt)
     if prefer_dataset:
         fn, status = _load_dataset_serializer()
         if fn is not None:
             try:
-                segs = _normalize(fn(ep))
+                segs = _normalize(_call_dataset_serializer(fn, ep, fmt))
             except Exception as e:  # pragma: no cover
                 return ref, f"contract (dataset serializer raised {e!r})"
             if segs is not None:
                 mismatch = check_against_contract(segs, ref)
-                return segs, "dataset" if not mismatch else f"dataset (differs from contract: {mismatch})"
+                if mismatch:
+                    return ref, f"contract (dataset serializer differs: {mismatch})"
+                return segs, "dataset"
             return ref, "contract (dataset serializer output shape not recognised)"
     return ref, "contract"
 

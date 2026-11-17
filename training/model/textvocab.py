@@ -142,6 +142,7 @@ class ChunkTokenizer(TextTokenizer):
         self.pieces = list(pieces)
         self.piece_id = {p: self.OFFSET + 256 + i for i, p in enumerate(self.pieces)}
         self.base_card = self.OFFSET + 256 + len(self.pieces)
+        self._inv = {v: k for k, v in self.piece_id.items()}  # built once: decode is called per frame
 
     @classmethod
     def build(cls, texts: Iterable[str], max_pieces: int = 4000, min_count: int = 1) -> "ChunkTokenizer":
@@ -178,7 +179,7 @@ class ChunkTokenizer(TextTokenizer):
         return out
 
     def decode_plain(self, ids: Sequence[int]) -> str:
-        inv = {v: k for k, v in self.piece_id.items()}
+        inv = self._inv
         buf = bytearray()
         for i in ids:
             if i in inv:

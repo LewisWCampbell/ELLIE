@@ -28,7 +28,7 @@ Facts taken from that source (verified by reading, not by running):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -335,6 +335,8 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
                   top_k=int(gcfg.get("top_k_audio", 250)), top_k_text=int(gcfg.get("top_k_text", 25)))
         self._forced: Optional[int] = None
         self._banned: List[int] = []
+        self._allowed: Optional[Sequence[int]] = None
+        self._masks: Dict[tuple, torch.Tensor] = {}  # allowed-set -> bool mask over the text vocabulary
         self._last_text: Optional[int] = None
         gen_self = self
         if self.flavor == "kyutai":
@@ -369,6 +371,18 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
         if self._forced is not None:
             text_logits.fill_(float("-inf"))
             text_logits[..., self._forced] = 0.0
+        elif self._allowed is not None:
+            # Inside a <tool> span (gen.constrain_calls): only these ids. The
+            # loop hands over the same tuple for the same set, so one mask per
+            # set is built and kept.
+            key = tuple(self._allowed)
+            mask = self._masks.get(key)
+            if mask is None:
+                mask = torch.zeros(text_logits.shape[-1], dtype=torch.bool, device=text_logits.device)
+                mask[list(key)] = True
+                if len(self._masks) < 4096:
+                    self._masks[key] = mask
+            text_logits.masked_fill_(~mask, float("-inf"))
         elif self._banned:
             text_logits[..., self._banned] = float("-inf")
 
@@ -405,10 +419,11 @@ class MoshiFrameGenerator(_frame_generator_base()):  # pragma: no cover - GPU on
                 self.lm_gen.load_voice_prompt(self.voice_prompt)
             self.lm_gen.step_system_prompts(self.mimi)
 
-    def step(self, frame, caller_codes, forced, banned, elle_codes=None) -> int:
+    def step(self, frame, caller_codes, forced, banned, elle_codes=None, allowed=None) -> int:
         from textvocab import PAD_ID
 
         self._forced, self._banned, self._last_text, self._probe = forced, list(banned), None, None
+        self._allowed = allowed
         if self.flavor == "kyutai":
             # Kyutai's LMGen takes only the user's codes; it has no zero-token
             # input, so -1 frames are fed as silence (unused path).

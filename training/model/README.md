@@ -33,11 +33,52 @@ training/model/run_dryrun.sh                          # prepare -> plain set -> 
 | `plain.py` | builds the plain-conversation set: `synth` (tool-free calls from training/data's builder) or `external` (moshi-finetune format, UNVERIFIED) |
 | `genloop.py` | the closed-loop evaluation loop shared by both backends, the `FrameGenerator` interface, the tiny generator, window stitching |
 | `metrics.py` | the five contract metrics over events |
-| `runtime.py` | frame-level tool-span parser, result injector, stream-to-events decoder |
+| `runtime.py` | frame-level tool-span parser (JSON and compact calls), result injector, stream-to-events decoder, `CallConstraint`, `BookingGuard` |
 | `evaluate.py` | reference mode (tests the metrics on the dataset) and model mode (closed loop, either backend, `--listen`) |
 | `infer_runtime.md` | inference server design and the WebSocket protocol for a Node `RealtimeModel` |
 | `fixtures/` | 11 hand-built episodes (6 positives, 5 negatives) and their generator |
-| `test_*.py` | tests |
+| `test_*.py` | tests (`test_v3.py`: everything in the next section) |
+
+## Contract v3 (compact calls, constrained decoding, booking guard)
+
+CONTRACT.md "Contract v3" on this side. Everything is switched by one key,
+`prepare.call_format`; `json` (the code's default) keeps v1 behaviour exactly.
+
+* **Format.** `prepare.call_format: compact` writes calls as `<tool>NAME</tool>`
+  or `<tool>NAME YYYY-MM-DDTHH:MM</tool>` (the owner's wall clock; about 12
+  frames instead of 44 on the dataset sample). `serializer_adapter` writes the
+  format itself and uses the dataset's serializer only when its spans are
+  identical. `runtime.ToolStreamParser` reads both formats, numbers calls in
+  order (`c1`, `c2`, ...; a v1 JSON call keeps its own id) and turns the time
+  into full ISO 8601 with the Pacific offset of that date.
+* **Constrained calls** (`eval.gen.constrain_calls`, on with compact).
+  `runtime.CallConstraint.allowed(span_tokens)` gives the token ids that keep
+  an open `<tool>` span a prefix of a valid call (one of the five names; a real
+  date and time, checked digit by digit); `</tool>` only when it is complete;
+  never PAD/EPAD. It works on decoded strings, so any tokenization of the same
+  text is accepted. The loop passes the set to `FrameGenerator.step(...,
+  allowed=)`; both backends mask every other logit. A malformed call cannot be
+  written.
+* **Error results** (`eval.gen.error_results`, on with compact). A span that
+  closes without being a call (possible only with the constraint off) is
+  answered one frame later with `<result id="cN">ERROR: ...</result>`
+  (`runtime.ERROR_RESULTS`) and still counted in `tool_errors`.
+* **Booking guard** (`eval.gen.booking_guard`, on with compact).
+  `runtime.BookingGuard` is pure logic fed with tool results and with caller
+  utterances as the system understood them (asked to book / took it back / said
+  yes); `check()` returns `None` (execute) or a `Refusal` whose text
+  (`runtime.REFUSALS`, `NOT BOOKED: <reason>. <what to do>`) is injected as the
+  result. There is no readback and no yes before a booking. In evaluation
+  `metrics.write_verdicts` feeds it from the episode's caller acts (an utterance
+  counts once it has been said) and from the model's own decoded speech (the
+  SMS consent question); the same function is the write-safety metric, so the
+  loop and the metric cannot disagree.
+* **Report.** `write_unsafe_rate` is what the model *attempted*;
+  `executed_unsafe_rate` is what took effect (0 by construction with the guard
+  on); `guard` in the model report counts bookings attempted / blocked /
+  executed and refusals by reason.
+* **Prompt.** `{caller}` in `prepare.prompt_text` becomes "The caller is NAME, a
+  returning caller." or "The caller is not on file." (`context.caller_on_file`).
 
 ## Approach
 
@@ -369,7 +410,7 @@ Assumptions (state them, then check them on the first run):
 | **Catastrophic forgetting** of conversation quality | Narrow synthetic data, 7B model | LoRA only, low lr, 30% plain-conversation mix, short schedule; eval perplexity on held-out plain conversation and human listening tests as gates, not just tool metrics. |
 | **Premature claims** | Text leads audio by about a frame, so the server cannot intercept a claim | Retimed data, unlikelihood on labelled premature claims, `premature_claim_rate <= 0.01` gate on a held-out family. If it is not met, train with text ahead of audio and add a server-side guard (`infer_runtime.md`). |
 | **Result-injection latency** | Forced tokens take real time; a result can only be injected at a word boundary | Injection at the next boundary within 0.48 s; compact results; measure `tool.result_injected` frame minus arrival in production. |
-| **Unsafe writes** | The model books before a readback or a yes | `write_gates`-labelled data, unlikelihood on the negatives' early `<tool>`, `write_unsafe_rate == 0` gate; the Node side can additionally refuse `book_intro_call` without a recent readback in the transcript. |
+| **Unsafe writes** | v3: the booking guard refuses them in code (see "Contract v3"); what follows is the v1 mitigation. The model books before a readback or a yes | `write_gates`-labelled data, unlikelihood on the negatives' early `<tool>`, `write_unsafe_rate == 0` gate; the Node side can additionally refuse `book_intro_call` without a recent readback in the transcript. |
 | **Synthetic-data gap** | Templated phrasing, TTS voices, cooperative callers, estimated timing | Paraphrase expansion; real production logs converted to this format for val/test at least; varied TTS voices and noise; the held-out `slot_conflict` family; listening tests. |
 | **Untested real backend** | No GPU here | Smoke test step 5 above before any long run; the tiny model mirrors Moshi's tensor contract, so failures should be in loading and naming, not in the training logic. |
 

@@ -38,6 +38,7 @@ lora:
 
 prepare:
   max_frames: 512
+  call_format: json            # the hand-built fixtures are v1 episodes (JSON calls with name/email, save_user_fact)
   audio:
     mode: placeholder
     card: 64

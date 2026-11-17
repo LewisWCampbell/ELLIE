@@ -27,6 +27,10 @@ lora:
 
 prepare:
   max_frames: 2000
+  # The dataset sample: compact once training/data emits v3 episodes. A v1
+  # sample (save_user_fact, bookings with name/email) has no compact form and
+  # prepare.py stops with an error saying so; set json to run it.
+  call_format: compact
 
 train:
   max_steps: 20

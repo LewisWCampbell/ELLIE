@@ -181,9 +181,19 @@ def build_model(cfg: dict, tok, device: str, base_dir: str, train_examples: Opti
     if backend != "tiny":
         raise ValueError(backend)
     model = build_tiny(cfg, tok.base_card).to(device)
-    if base_path and os.path.exists(base_path):
-        model.load_state_dict(torch.load(base_path, map_location=device))
-    else:
+    cached = bool(base_path and os.path.exists(base_path))
+    if cached:
+        try:
+            model.load_state_dict(torch.load(base_path, map_location=device))
+        except RuntimeError:
+            # A base saved for another vocabulary (the dry-run vocabulary is
+            # rebuilt from the data, e.g. after the call format changed). When
+            # training, make a new one; anything else must not guess.
+            if train_examples is None:
+                raise
+            log(f"[tiny] {base_path} does not fit this vocabulary; building a new base")
+            cached = False
+    if not cached:
         steps = int(cfg.get("tiny", {}).get("pretrain_steps", 0))
         if steps and train_examples:
             stripped = [strip_specials(e, tok.base_card) for e in train_examples]
