@@ -1,0 +1,12 @@
+# Used by `prepare.sh retime`: the same text settings as gcp_v3.yaml (the call
+# format decides how long a call takes in the text stream, hence how much room
+# retiming must make), but no audio yet: this runs before the audio exists.
+extends: gcp_v3.yaml
+
+data:
+  plain_prepared_dir: null
+
+prepare:
+  audio:
+    mode: zero
+    audio_is_retimed: false

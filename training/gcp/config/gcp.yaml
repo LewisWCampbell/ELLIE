@@ -14,8 +14,19 @@ data:
 
 eval:
   listen: 5                           # save 5 of Elle's generated replies as WAV for listening
+  gen:                                # v1 has no compact calls, guard rules or error results
+    constrain_calls: false
+    error_results: false
+    booking_guard: false
 
 prepare:
+  # v1 was trained on JSON calls, the old prompt and the zero prompt layout.
+  # These pins keep its checkpoints and encodings readable (diagnose.sh).
+  call_format: json
+  prompt_audio: zero
+  prompt_text: "<system> You work for Sam as his phone assistant and your name is Elle. You book intro calls. <system>"
+  anchor_calls_to_utterance: false
+  window_guard_frames: 0
   audio:
     audio_dir: ${ELLE_WORK}/audio
     audio_is_retimed: true              # assembled by `prepare.sh assemble` from retimed.jsonl

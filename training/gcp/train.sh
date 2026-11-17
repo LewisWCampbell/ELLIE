@@ -36,8 +36,8 @@ echo "Training finished; results are in $BUCKET/runs/$RUN_NAME."
 # step and returns at once). A failed evaluation is not retried: its log goes
 # to the bucket and the VM shuts down.
 if [ "${EVAL_AFTER:-1}" = 1 ] && [ ! -f "$ELLE_WORK/.done_eval_$RUN_NAME" ]; then
-  echo "Evaluation starting $(date) (${EVAL_EPISODES:-40} test conversations); log: ~/eval.log"
-  if EVAL_EPISODES="${EVAL_EPISODES:-40}" bash "$REPO/training/gcp/eval.sh" > "$HOME/eval.log" 2>&1; then
+  echo "Evaluation starting $(date) (${EVAL_EPISODES:-100} test conversations); log: ~/eval.log"
+  if EVAL_EPISODES="${EVAL_EPISODES:-100}" bash "$REPO/training/gcp/eval.sh" > "$HOME/eval.log" 2>&1; then
     echo "Evaluation finished $(date)"
   else
     echo "Evaluation FAILED $(date); see the uploaded log"

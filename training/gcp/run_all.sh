@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # On the VM: the whole pipeline, unattended, start to finish.
-#   tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh'
-# synth -> retime -> assemble -> mimi -> train. Every step resumes, and the
+#   tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh pilot'   data, then the go/no-go pilot
+#   tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh full'    data (skipped if done), train, evaluate
+# Every step resumes, and the
 # boot service reruns this script after a Spot stop (train.sh hands over to
 # it while the .pipeline marker exists). On success train.sh shuts the VM
 # down; on any failure this script shuts it down too, so nothing bills idle.
@@ -12,7 +13,7 @@ if [ -z "${RUN_ALL_LOGGING:-}" ]; then
   exec > >(tee -a "$HOME/run_all.log") 2>&1
 fi
 set -E  # let the ERR trap fire inside functions too
-touch "$ELLE_WORK/.pipeline" "$ELLE_WORK/.training"
+touch "$ELLE_WORK/.training"
 start_progress
 # A sick GPU is not a failed run: keep the resume markers and stop, so the
 # restart job brings the VM back (usually on other hardware) and this resumes.
@@ -35,30 +36,22 @@ fail() {
 }
 trap fail ERR
 
-done_mark() { [ -f "$ELLE_WORK/.done_$1" ]; }
-step() {
-  STEP="$1"
-  if done_mark "$1"; then echo "run_all: $1 already done, skipping"; return; fi
-  echo "run_all: $1 starting $(date)"
-  bash "$REPO/training/gcp/prepare.sh" "$1"
-  touch "$ELLE_WORK/.done_$1"
-  echo "run_all: $1 finished $(date)"
-}
+# What to do after the data is ready: "pilot" (the go/no-go check) or "full"
+# (train and evaluate). Given once on the command line and remembered in the
+# .pipeline marker, so a resume after a Spot stop continues the same job.
+MODE="${1:-$(cat "$ELLE_WORK/.pipeline" 2>/dev/null || true)}"
+MODE="${MODE:-full}"
+echo "$MODE" > "$ELLE_WORK/.pipeline"
+echo "run_all: mode $MODE, data $DATA_TAG, config $CFG_TAG ($(date))"
 
-step synth
-step retime
-step assemble
-# The encoding steps depend on the config (prompt, layout), so their markers do too.
-step_cfg() {
-  STEP="$1"
-  if [ -f "$ELLE_WORK/.done_${1}_$CFG_TAG" ]; then echo "run_all: $1 ($CFG_TAG) already done, skipping"; return; fi
-  echo "run_all: $1 ($CFG_TAG) starting $(date)"
-  bash "$REPO/training/gcp/prepare.sh" "$1"
-  touch "$ELLE_WORK/.done_${1}_$CFG_TAG"
-  echo "run_all: $1 ($CFG_TAG) finished $(date)"
-}
-step_cfg mimi
-step_cfg plain
+STEP=data
+bash "$REPO/training/gcp/prepare_all.sh"
+
+if [ "$MODE" = pilot ]; then
+  STEP=pilot
+  bash "$REPO/training/gcp/pilot.sh"
+  exit 0
+fi
 
 STEP=train
 rm -f "$ELLE_WORK/.pipeline"

@@ -68,30 +68,40 @@ If Spot stops the VM mid-run: `gcloud compute instances start elle-train
 itself. The audio steps (9 to 11) resume too, but not on their own: start the
 VM and rerun the same command.
 
-## The second run (v2)
+## The current run (v3)
 
-The first run's checkpoint made zero tool calls in evaluation. That came from
-the evaluation feeding the model different audio than training during the
-system prompt, now fixed and covered by `test_personaplex`.
-`diagnose.sh` re-evaluates that checkpoint. v2 also fixes what only a retrain
-can: the prompt has the date (and Lewis's name), PersonaPlex's own prompt
-layout, calls placed right after the line that announces them, float32 rows for
-the new tokens, `<tool>` weighted on its own, and no unlikelihood term. Same
-audio as v1; only the text stream is re-encoded (`gcp_v2.yaml`). Order:
+v1's checkpoint made zero tool calls in its first evaluation because the
+evaluation fed the model different audio than training during the system
+prompt (fixed; `test_personaplex` now compares the two frame by frame).
+Re-evaluated on a healthy GPU it called the right tools at about the right
+rate, but with invented names and emails, wrong dates (it was never told the
+date), sometimes invented tool names, and unsafe bookings. v3 (CONTRACT.md,
+"Contract v3") takes each of those out of the model's hands. The conversations
+are new, so the audio is recorded again; everything lives in its own folders
+(`data_v3`, `audio_v3`, `runs/prepared_v3`, `runs/elle_tools_v3`).
 
 ```
-VM  1. git pull
-    2. tmux new -d -s pilot 'bash ~/ELLE/training/gcp/pilot.sh'
-         encodes v2 (~1 h), then 200 steps on 32 calls at two learning rates,
-         each followed by markers.py and a closed-loop check; uploads
-         logs/pilot_*.log and shuts down
-    3. read the log. Go if a learning rate reaches <tool> accuracy >= 0.95 and
-       >= 80% of the expected calls in closed loop with no parse errors; put
-       that rate in base_gpu.yaml (train.optim.lr)
-    4. tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh'
-         skips the finished steps, trains v2 and evaluates it; the restart
-         job brings it back after Spot stops
+VM  1. cd ~/ELLE && git pull
+    2. tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh pilot'
+         generate + check the tokenizer, speak, retime, assemble, encode
+         (about 4 h), then the pilot: 200 steps on 32 calls at two learning
+         rates, each followed by markers.py and a closed-loop check; uploads
+         logs/pilot_*.log, pauses the restart job, shuts down
+    3. read the pilot log. Go if a learning rate reaches <tool> accuracy
+       >= 0.95 and >= 80% of the expected calls in closed loop; put that rate
+       in model/config/base_gpu.yaml (train.optim.lr)
+    4. tmux new -d -s elle 'bash ~/ELLE/training/gcp/run_all.sh full'
+         skips the finished data steps, trains v3, evaluates 100 test calls
+         greedy and sampled, shuts down
 ```
+
+With the restart job enabled (`gcloud scheduler jobs resume elle-watchdog
+--location us-central1`) both commands survive Spot stops: every step,
+including the encoding and the pilot, continues where it stopped. Every job
+starts with a GPU health check (`gpu_check.py`). `status.txt` in the bucket is
+refreshed every 5 minutes (`progress.sh`). The first run's audio and encodings
+on the VM are deleted at the start to make room (its checkpoints and reports
+are in the bucket); `KEEP_V1=1` keeps them.
 
 ## Same project as Elle, separate identity
 

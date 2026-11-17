@@ -19,37 +19,47 @@ if [ -n "${LIMIT:-}" ]; then LIMIT_ARGS=(--limit "$LIMIT"); fi
 case "${1:-}" in
   check)
     "$TTS" training/data/render_audio.py check-kokoro --out "$ELLE_WORK/kokoro_check" ;;
+  gen)
+    # The conversations themselves, and a check that the real tokenizer can
+    # write every tool call exactly (an unknown character would silently
+    # corrupt the calls in training and make them unparseable later).
+    mkdir -p "$DATA_DIR"
+    python3 training/data/generate.py --out "$DATA_DIR" --prefix full_ \
+      --train "${N_TRAIN:-20000}" --val "${N_VAL:-1000}" --test "${N_TEST:-1000}" --seed 7 --holdout-family slot_conflict
+    python3 training/data/validate.py "$DATA_DIR"/full_*.jsonl --holdout-family slot_conflict
+    cat "$DATA_DIR"/full_{train,val,test}.jsonl > "$DATA_DIR/episodes.jsonl"
+    python3 training/gcp/tokenizer_check.py --config "$ELLE_CFG" --episodes "$DATA_DIR/episodes.jsonl" ;;
   synth)
-    "$TTS" training/data/render_audio.py synth "$ELLE_WORK/data/episodes.jsonl" \
-      --cache "$ELLE_WORK/clips" --out "$ELLE_WORK/data/measured.jsonl" \
+    "$TTS" training/data/render_audio.py synth "$DATA_DIR/episodes.jsonl" \
+      --cache "$CLIPS_DIR" --out "$DATA_DIR/measured.jsonl" \
       --backend kokoro --workers "${WORKERS:-6}" "${LIMIT_ARGS[@]}" ;;
   retime)
-    python3 training/model/prepare.py --config training/gcp/config/smoke.yaml \
-      --episodes "$ELLE_WORK/data/measured.jsonl" --out "$ELLE_WORK/runs/prepared_zero" \
-      --write-retimed "$ELLE_WORK/data/retimed.jsonl" ;;
+    python3 training/model/prepare.py --config "${ELLE_CFG%.yaml}_retime.yaml" \
+      --episodes "$DATA_DIR/measured.jsonl" --out "$ELLE_WORK/runs/retime_$DATA_TAG" \
+      --write-retimed "$DATA_DIR/retimed.jsonl" ;;
   assemble)
-    "$TTS" training/data/render_audio.py assemble "$ELLE_WORK/data/retimed.jsonl" \
-      --cache "$ELLE_WORK/clips" --out "$ELLE_WORK/audio" \
-      --delete-clips --chunk 500 "${LIMIT_ARGS[@]}" ;;
-  mimi)
-    python3 training/model/prepare.py --config "$ELLE_CFG" ;;
-  plain)
+    "$TTS" training/data/render_audio.py assemble "$DATA_DIR/retimed.jsonl" \
+      --cache "$CLIPS_DIR" --out "$AUDIO_DIR" \
+      --delete-clips --chunk 500 "${LIMIT_ARGS[@]}"
+    python3 training/gcp/repair_audio.py "$DATA_DIR/retimed.jsonl" "$AUDIO_DIR" ;;
+  plain_audio)
     # The plain-conversation set (no tools) goes through the same voice
     # pipeline as the tool data, so it has real audio too.
-    D="$ELLE_WORK/data"
-    # Voiced once (v1 did it under the marker .done_plain), reused by every run.
-    if [ ! -f "$ELLE_WORK/.done_plain_audio" ] && [ ! -f "$ELLE_WORK/.done_plain" ]; then
-      [ -f "$D/plain_episodes.jsonl" ] || python3 training/model/plain.py episodes \
-        --n-train 2000 --n-val 200 --out "$D/plain_episodes.jsonl"
-      "$TTS" training/data/render_audio.py synth "$D/plain_episodes.jsonl" \
-        --cache "$ELLE_WORK/clips_plain" --out "$D/plain_measured.jsonl" --backend kokoro --workers "${WORKERS:-6}"
-      python3 training/model/prepare.py --config training/gcp/config/smoke.yaml \
-        --episodes "$D/plain_measured.jsonl" --out "$ELLE_WORK/runs/plain_zero" --write-retimed "$D/plain_retimed.jsonl"
-      "$TTS" training/data/render_audio.py assemble "$D/plain_retimed.jsonl" \
-        --cache "$ELLE_WORK/clips_plain" --out "$ELLE_WORK/audio" --delete-clips --chunk 500
-      touch "$ELLE_WORK/.done_plain_audio"
-    fi
-    python3 training/model/plain.py synth --config "$ELLE_CFG" --episodes "$D/plain_retimed.jsonl" ;;
+    [ -f "$DATA_DIR/plain_episodes.jsonl" ] || python3 training/model/plain.py episodes \
+      --n-train 2000 --n-val 200 --out "$DATA_DIR/plain_episodes.jsonl"
+    "$TTS" training/data/render_audio.py synth "$DATA_DIR/plain_episodes.jsonl" \
+      --cache "$CLIPS_DIR" --out "$DATA_DIR/plain_measured.jsonl" --backend kokoro --workers "${WORKERS:-6}"
+    python3 training/model/prepare.py --config "${ELLE_CFG%.yaml}_retime.yaml" \
+      --episodes "$DATA_DIR/plain_measured.jsonl" --out "$ELLE_WORK/runs/retime_plain_$DATA_TAG" \
+      --write-retimed "$DATA_DIR/plain_retimed.jsonl"
+    "$TTS" training/data/render_audio.py assemble "$DATA_DIR/plain_retimed.jsonl" \
+      --cache "$CLIPS_DIR" --out "$AUDIO_DIR" --delete-clips --chunk 500 ;;
+  mimi)
+    # Encodes the audio (cached per file, so an interrupted run resumes) and
+    # builds the training examples.
+    python3 training/model/prepare.py --config "$ELLE_CFG" ;;
+  plain)
+    python3 training/model/plain.py synth --config "$ELLE_CFG" --episodes "$DATA_DIR/plain_retimed.jsonl" ;;
   *)
-    echo "usage: bash prepare.sh check|synth|retime|assemble|mimi|plain"; exit 2 ;;
+    echo "usage: bash prepare.sh check|gen|synth|retime|assemble|plain_audio|mimi|plain"; exit 2 ;;
 esac

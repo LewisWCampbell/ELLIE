@@ -1,0 +1,27 @@
+# The v3 run (CONTRACT.md "Contract v3"): new conversations, short strict
+# calls, names and emails from results, no confirmation step, booking guard.
+# Everything lives in its own folders on the VM (data_v3, audio_v3, ...).
+extends: ../../model/config/base_gpu.yaml
+
+run_dir: ${ELLE_WORK}/runs/elle_tools_v3
+
+data:
+  # The retimed episodes the audio was assembled from. Never the raw ones:
+  # their times would not match the audio.
+  episodes: ${ELLE_WORK}/data_v3/retimed.jsonl
+  prepared_dir: ${ELLE_WORK}/runs/prepared_v3
+  plain_prepared_dir: ${ELLE_WORK}/runs/plain_v3
+
+eval:
+  listen: 5
+
+prepare:
+  audio:
+    audio_dir: ${ELLE_WORK}/audio_v3
+    audio_is_retimed: true
+
+train:
+  # PersonaPlex has no gradient checkpointing: 4 x 4 keeps the effective batch
+  # at 16 within the A100's 80 GB (the first run peaked at 72 GB).
+  batch_size: 4
+  grad_accum: 4

@@ -328,6 +328,34 @@ def mimi_audio(wav_path: str, T: int, mimi_cfg: dict) -> np.ndarray:  # pragma: 
     InterleavedTokenizer, which encodes both channels as a batch of 2.
     Not run on this machine (no moshi, no GPU, Hugging Face blocked).
     """
+    # Codes are cached per file next to the audio (<audio_dir>_codes/), written
+    # atomically: encoding 500+ hours takes about an hour of GPU, a Spot VM is
+    # often reclaimed within that hour, and without the cache every
+    # interruption (and every later text-only re-prepare) started from zero.
+    cache = os.path.join(mimi_cfg.get("codes_cache_dir") or os.path.dirname(os.path.abspath(wav_path)).rstrip("/") + "_codes",
+                         os.path.splitext(os.path.basename(wav_path))[0] + ".npy")
+    codes = None
+    if os.path.exists(cache):
+        try:
+            codes = np.load(cache).astype(np.int64)
+        except (OSError, ValueError, EOFError):
+            codes = None  # truncated by a power cut: encode again
+    if codes is None:
+        codes = _mimi_encode(wav_path, mimi_cfg)
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        tmp = cache + ".tmp"
+        with open(tmp, "wb") as f:
+            np.save(f, codes.astype(np.int16))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, cache)
+    out = np.full((2 * N_CODEBOOKS_PER_CHANNEL, T), ZERO_TOKEN_ID, dtype=np.int64)
+    n = min(T, codes.shape[1])
+    out[:, :n] = codes[:, :n]
+    return out
+
+
+def _mimi_encode(wav_path: str, mimi_cfg: dict) -> np.ndarray:  # pragma: no cover - needs GPU stack
     import torch
     from moshi.models import loaders  # type: ignore
 
@@ -345,11 +373,7 @@ def mimi_audio(wav_path: str, T: int, mimi_cfg: dict) -> np.ndarray:  # pragma: 
     with torch.no_grad():
         x = torch.tensor(wav, device=_MIMI.device if hasattr(_MIMI, "device") else mimi_cfg.get("device", "cuda"))
         codes = _MIMI.encode(x[:, None])  # [2, 8, frames]
-    codes = codes.reshape(2 * N_CODEBOOKS_PER_CHANNEL, -1).cpu().numpy()
-    out = np.full((2 * N_CODEBOOKS_PER_CHANNEL, T), ZERO_TOKEN_ID, dtype=np.int64)
-    n = min(T, codes.shape[1])
-    out[:, :n] = codes[:, :n]
-    return out
+    return codes.reshape(2 * N_CODEBOOKS_PER_CHANNEL, -1).cpu().numpy()
 
 
 _MIMI = None

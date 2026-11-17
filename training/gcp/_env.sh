@@ -10,9 +10,16 @@ export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 cd "$REPO"
 # Which run the scripts work on: its config and its folder name (under runs/
 # on the VM and in the bucket). The first run (v1) keeps its own config.
-export ELLE_CFG="${ELLE_CFG:-training/gcp/config/gcp_v2.yaml}"
-export RUN_NAME="${RUN_NAME:-elle_tools_v2}"
+export ELLE_CFG="${ELLE_CFG:-training/gcp/config/gcp_v3.yaml}"
+export RUN_NAME="${RUN_NAME:-elle_tools_v3}"
 CFG_TAG="$(basename "$ELLE_CFG" .yaml)"
+# Each generation of the dataset has its own folders: episode ids repeat
+# between generations (ep_000000 ...), so sharing a folder would silently pair
+# new text with old audio. (v1 lived in data/, clips/, audio/.)
+export DATA_TAG="${DATA_TAG:-v3}"
+export DATA_DIR="$ELLE_WORK/data_$DATA_TAG"
+export AUDIO_DIR="$ELLE_WORK/audio_$DATA_TAG"
+export CLIPS_DIR="$ELLE_WORK/clips_$DATA_TAG"
 
 # Start the background progress reporter (progress.sh) unless one is running.
 start_progress() {
